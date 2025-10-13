@@ -47,7 +47,7 @@ def get_training_args():
     parser.add_argument("--intermediate_size", type=int, default=4096, help="Intermediate size of the model")
     parser.add_argument("--dropout", type=float, default=0.0, help="Dropout rate")
     parser.add_argument("--tied_lm_head", action="store_true", help="Tie the weights of the LM head and embedding layer")
-    parser.add_argument("--use_moe_ratio", type=float, default=1.0, help="Ratio of layers using MoE")
+    parser.add_argument("--use_moe", action="store_true", help="Using MoE")
     parser.add_argument("--num_experts", type=int, default=128, help="Number of experts in MoE")
     parser.add_argument("--num_experts_per_tok", type=int, default=8, help="Top-k experts to use in MoE")
     parser.add_argument("--moe_intermediate_size", type=int, default=256, help="Intermediate size for MoE layers")
