@@ -96,10 +96,11 @@ class Trainer:
             if config.do_val:
                 self.val_dataset = MockDataset(config.mock_data_num_samples // 10, config.T)
         else:
-            self.train_dataset = CustomDataset(dataset_path=config.dataset_path, split="train", ...)
+            class CustomDataset: ...
+            self.train_dataset = CustomDataset(dataset_path=config.dataset_path, split="train")
             if config.do_val:
                 self.val_dataset = SlidingTokenDataset(
-                    dataset_path=config.dataset_path, split="validation", ...)
+                    dataset_path=config.dataset_path, split="validation")
         train_sampler = DistributedSampler(self.train_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=True)
         self.train_loader = DataLoader(self.train_dataset, batch_size=config.B, sampler=train_sampler, num_workers=0, pin_memory=True)
         if config.do_val:
