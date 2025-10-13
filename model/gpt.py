@@ -34,7 +34,7 @@ class GPT(nn.Module):
         self.pos = None
         self.use_moe = config.use_moe
         self.wte = nn.Embedding(config.vocab_size, config.hidden_size)
-        self.blocks = nn.ModuleList([Block(config, use_moe) for layer in config.num_layer])
+        self.blocks = nn.ModuleList([Block(config, self.use_moe) for layer in range(config.num_layer)])
         self.lnf = LayerNorm(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         if config.tied_lm_head:
