@@ -29,6 +29,7 @@ from utils import (
 
 @dataclass
 class TrainerConfig:
+    exp_name: str = "gpt"
     seed: int = 1337
     log_dir: str = "./log/"
     dataset_path: str = "../data/fineweb-edu-sample-10BT/"
@@ -176,6 +177,7 @@ class Trainer:
         # create the log directory we will write checkpoints to and log to
         self.log_dir = os.path.join(
             config.log_dir,
+            f"{config.exp_name}_"
             f"modelsize_{sum(p.numel() for p in self.raw_model.parameters())}_"
             f"lr{config.max_lr}_"
             f"B{config.total_batch_size}_"

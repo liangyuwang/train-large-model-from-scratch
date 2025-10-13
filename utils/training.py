@@ -7,6 +7,7 @@ def get_training_args():
     """
     parser = argparse.ArgumentParser(description="Training Configuration")
     # Training hyperparameters
+    parser.add_argument("--exp_name", type=str, default="gpt", help="Experiment name")
     parser.add_argument("--seed", type=int, default=1337, help="Random seed for reproducibility")
     parser.add_argument("--log_dir", type=str, default="./log/", help="Directory for logging")
     parser.add_argument("--dataset_path", type=str, default="../data/fineweb-edu-sample-10BT/", help="Path to the dataset")
