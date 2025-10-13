@@ -1,7 +1,7 @@
 from model.config import GPTConfig
 
 def get_model_params(model_config: GPTConfig):
-    if model_config.use_moe_ratio > 0:
+    if model_config.use_moe:
         return get_moe_model_params(
             num_layer=model_config.num_layer,
             hidden_size=model_config.hidden_size,
