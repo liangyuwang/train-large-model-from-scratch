@@ -8,12 +8,6 @@ from .modules.attn import Attention
 from .modules.mlp import MLP, MoE
 from .modules.norm import LayerNorm
 
-"""
-Features:
-    1. MoE flexible top_k, from sparse to dense
-    2. few first blocks are Dense, the rest are MoE
-"""
-
 class Block(nn.Module):
 
     def __init__(self, config: GPTConfig, use_moe: bool = True, top_k: int = None):
@@ -38,9 +32,9 @@ class GPT(nn.Module):
         super().__init__()
         self.config = config
         self.pos = None
-        use_moe_list = [True if i >= (1 - config.use_moe_ratio) * config.num_layer else False for i in range(config.num_layer)]
+        self.use_moe = config.use_moe
         self.wte = nn.Embedding(config.vocab_size, config.hidden_size)
-        self.blocks = nn.ModuleList([Block(config, use_moe) for use_moe in use_moe_list])
+        self.blocks = nn.ModuleList([Block(config, use_moe) for layer in config.num_layer])
         self.lnf = LayerNorm(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         if config.tied_lm_head:

@@ -19,7 +19,6 @@ from transformers import AutoTokenizer, set_seed    #TODO: remove transformers
 
 from stream_dataloader.dataset import SlidingTokenDataset
 from model import GPTConfig, GPT
-from optimizer import MuonWithAuxAdam
 from distributed import DistributedOptimizer
 from utils import (
     get_training_args, 
@@ -28,15 +27,9 @@ from utils import (
     compute_mfu_from_time,
 )
 
-"""
-Features:
-    1. Muon + AdamW ZeRO-1 Optimizer
-    2. Distributed framework: Pure ZeRO-1, use DTensor for auto overlap
-    3. FP8 forward + (FP16) backward + BF16 optimizer + FP32 update
-"""
-
 @dataclass
 class TrainerConfig:
+    exp_name: str = "gpt"
     seed: int = 1337
     log_dir: str = "./log/"
     dataset_path: str = "../data/fineweb-edu-sample-10BT/"
@@ -85,12 +78,6 @@ class Trainer:
         torch.cuda.set_device(device)
         self.master_process = self.dp_rank == 0 # this process will do logging, checkpointing etc.
         
-        # impl ep (not edp, no need all-to-all)
-        # ep_group = ... (inside dp group)
-        # init mlp (moe) size // ep size
-        # init the rest modules with avg all-reduce cross ep group
-        # impl moe forward with drop-grouped_gemm-gather tokens strategies
-
     def _init_dataset(self, config: TrainerConfig):
         if config.use_mock_data:
             from torch.utils.data import Dataset
@@ -107,30 +94,21 @@ class Trainer:
                     y = data[1:self.seq_len+1]
                     return {"input_ids": x, "labels": y}
             self.train_dataset = MockDataset(config.mock_data_num_samples, config.T)
-            train_sampler = DistributedSampler(self.train_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=True)
-            self.train_loader = DataLoader(self.train_dataset, batch_size=config.B, sampler=train_sampler, num_workers=0, pin_memory=True)
             if config.do_val:
                 self.val_dataset = MockDataset(config.mock_data_num_samples // 10, config.T)
-                val_sampler = DistributedSampler(self.val_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=False)
-                self.val_loader = DataLoader(self.val_dataset, batch_size=config.B, sampler=val_sampler, num_workers=0, pin_memory=True)
-            else:
-                self.val_dataset = self.val_loader = None
         else:
-            self.train_dataset = SlidingTokenDataset(
-                dataset_path=config.dataset_path, split="train", split_rate=config.split_rate, 
-                seq_len=config.T, stride=config.T, batch_size=config.B*self.dp_world_size, 
-                seed=config.seed, rank=self.dp_rank, world_size=self.dp_world_size)
-            train_sampler = DistributedSampler(self.train_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=False)
-            self.train_loader = DataLoader(self.train_dataset, batch_size=config.B, shuffle=False, sampler=train_sampler, num_workers=0, pin_memory=True)
+            class CustomDataset: ...
+            self.train_dataset = CustomDataset(dataset_path=config.dataset_path, split="train")
             if config.do_val:
                 self.val_dataset = SlidingTokenDataset(
-                    dataset_path=config.dataset_path, split="validation", split_rate=config.split_rate, 
-                    seq_len=config.T, stride=config.T, batch_size=config.B*self.dp_world_size, 
-                    seed=config.seed, rank=self.dp_rank, world_size=self.dp_world_size)
-                val_sampler = DistributedSampler(self.val_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=False)
-                self.val_loader = DataLoader(self.val_dataset, batch_size=config.B, shuffle=False, sampler=val_sampler, num_workers=0, pin_memory=True)
-            else:
-                self.val_dataset = self.val_loader = None
+                    dataset_path=config.dataset_path, split="validation")
+        train_sampler = DistributedSampler(self.train_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=True)
+        self.train_loader = DataLoader(self.train_dataset, batch_size=config.B, sampler=train_sampler, num_workers=0, pin_memory=True)
+        if config.do_val:
+            val_sampler = DistributedSampler(self.val_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=False)
+            self.val_loader = DataLoader(self.val_dataset, batch_size=config.B, sampler=val_sampler, num_workers=0, pin_memory=True)
+        else:
+            self.val_dataset = self.val_loader = None
 
     def _init_model(self, config: TrainerConfig, model_config: GPTConfig = None):
         torch.set_float32_matmul_precision('high')
@@ -143,25 +121,12 @@ class Trainer:
         if config.use_compile and hasattr(torch, 'compile'):
             model = torch.compile(model)
         model = model.to(f'cuda:{self.dp_local_rank}')
-        #TODO: Here ZeRO-1 only need 'reduce' not 'all-reduce', we can develop a custom DDP wrapper for ZeRO-1
+        #TODO: Here ZeRO-1 actually only need 'reduce' not 'all-reduce' used in DDP, we can develop a custom wrapper for ZeRO-1
         self.model = DDP(model, process_group=self.dp_group, find_unused_parameters=True, gradient_as_bucket_view=True)
         self.raw_model = self.model.module
 
     def _init_optimizer(self, config: TrainerConfig):
-        if config.use_muon:
-            muon_params = []
-            adam_params = []
-            for name, param in self.raw_model.named_parameters():
-                if 'attn' in name or 'mlp' in name:
-                    muon_params.append(param)
-                else:
-                    adam_params.append(param)
-            self.optimizer = MuonWithAuxAdam([
-                {'params': muon_params, 'use_muon': True},
-                {'params': adam_params, 'use_muon': False}
-            ])
-        else:
-            self.optimizer = torch.optim.AdamW(self.raw_model.parameters())
+        self.optimizer = torch.optim.AdamW(self.raw_model.parameters(), weight_decay=config.weight_decay)
         self.optimizer = DistributedOptimizer(
             optimizer=self.optimizer,
             process_group=self.dp_group,
@@ -212,6 +177,7 @@ class Trainer:
         # create the log directory we will write checkpoints to and log to
         self.log_dir = os.path.join(
             config.log_dir,
+            f"{config.exp_name}_"
             f"modelsize_{sum(p.numel() for p in self.raw_model.parameters())}_"
             f"lr{config.max_lr}_"
             f"B{config.total_batch_size}_"
@@ -348,9 +314,9 @@ class Trainer:
             tokens_per_sec = tokens_processed / dt
             mfu, actual, peak = compute_mfu_from_time(
                 self.config.B, self.config.T, self.model_config.hidden_size, 
-                self.model_config.moe_intermediate_size if self.model_config.use_moe_ratio > 0 else self.model_config.intermediate_size,
-                self.model_config.num_experts_per_tok if self.model_config.use_moe_ratio > 0 else 1, 
-                self.model_config.num_experts if self.model_config.use_moe_ratio > 0 else 1,
+                self.model_config.moe_intermediate_size if self.model_config.use_moe else self.model_config.intermediate_size,
+                self.model_config.num_experts_per_tok if self.model_config.use_moe else 1, 
+                self.model_config.num_experts if self.model_config.use_moe else 1,
                 self.model_config.num_layer, dt, self.training_info["grad_accum_steps"], dtype="bf16")
             if self.master_process:
                 tqdm.write(f"step {step:5d} | loss: {self.one_step_results['loss'].item():.6f} | lr {self.one_step_results['lr']:.4e} | grad norm: {self.one_step_results['grad_norm']:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f} | MFU: {mfu*100:.2f}%")
@@ -382,8 +348,6 @@ class Trainer:
         next_step = (step if step is not None else 0) + 1
         sampler_epoch_next = next_step // steps_per_epoch
         sampler_iter_idx_next = (next_step % steps_per_epoch) * self.training_info['grad_accum_steps']
-        if self.dp_rank == 0:
-            torch.save(self.raw_model.state_dict(), f"{checkpoint_path}_model.pt")
         state_dict_saver.save(
             state_dict={f"optimizer/dp_rank{self.dp_rank}": self.raw_optimizer.state_dict()},
             storage_writer=FileSystemWriter(f"{checkpoint_path}_opt"),
@@ -394,14 +358,12 @@ class Trainer:
             'numpy': np.random.get_state(),
         }
         if self.master_process:
+            torch.save(self.raw_model.state_dict(), f"{checkpoint_path}_model.pt")
             checkpoint = {
                 'trainer_config': self.config,
                 'model_config': self.raw_model.config,
                 'step': step,
                 'this_step_results': self.one_step_results,
-                # 'dataset_state': {
-                #     'train': self._get_dataset_state(self.train_dataset),
-                # },
                 'opt_part_assignment': self.optimizer.part_assignment,
                 'sampler_state': {
                     'epoch': sampler_epoch_next,

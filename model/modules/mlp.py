@@ -4,12 +4,6 @@ import torch.nn.functional as F
 
 from ..config import GPTConfig
 
-"""
-Features:
-    0.1. Async MoE forward
-    1. DeepGemm for FP8 Grouped GEMM
-"""
-
 class MLP(nn.Module):
     """Dense MLP or Single expert in MoE"""
     def __init__(self, config: GPTConfig, use_moe: bool = False):
