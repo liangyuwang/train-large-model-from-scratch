@@ -17,7 +17,6 @@ from torch.distributed.checkpoint.filesystem import FileSystemWriter, FileSystem
 from torch.nn.parallel import DistributedDataParallel as DDP
 from transformers import AutoTokenizer, set_seed    #TODO: remove transformers
 
-from stream_dataloader.dataset import SlidingTokenDataset
 from model import GPTConfig, GPT
 from distributed import DistributedOptimizer
 from utils import (

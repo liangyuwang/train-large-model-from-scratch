@@ -48,7 +48,7 @@ EXP_NAME="debug_gpt_0.3b_a0.17b"
 TRAINING_ARGS="\
   --exp_name $EXP_NAME \
   --seed 1337 \
-  --dataset_path  \
+  --dataset_path ... \
   --use_mock_data \
   --mock_data_num_samples 12800 \
   --log_dir ./log \
