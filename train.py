@@ -68,14 +68,17 @@ class TrainerConfig:
 class Trainer:
     def _init_setup(self, config: TrainerConfig):
         set_seed(config.seed)
-        dist.init_process_group(backend='nccl')
-        self.dp_rank = int(os.environ['RANK'])
-        self.dp_local_rank = int(os.environ['LOCAL_RANK'])
-        self.dp_world_size = int(os.environ['WORLD_SIZE'])
-        self.dp_group = dist.new_group(backend='nccl', ranks=list(range(self.dp_world_size)))
-        device = f'cuda:{self.dp_local_rank}'
+        self.rank = int(os.environ['RANK'])
+        self.local_rank = int(os.environ['LOCAL_RANK'])
+        self.world_size = int(os.environ['WORLD_SIZE'])
+        dist.init_process_group(backend='nccl', init_method='env://')
+        device = f'cuda:{self.local_rank}'
         torch.cuda.set_device(device)
-        self.master_process = self.dp_rank == 0 # this process will do logging, checkpointing etc.
+        self.master_process = self.rank == 0 # this process will do logging, checkpointing etc.
+        self.dp_group = dist.new_group(backend='nccl', ranks=list(range(self.world_size)))
+        self.dp_rank = dist.get_rank(self.dp_group)
+        self.dp_world_size = dist.get_world_size(self.dp_group)
+        self.dp_local_rank = self.local_rank
         
     def _init_dataset(self, config: TrainerConfig):
         if config.use_mock_data:
