@@ -77,9 +77,11 @@ class Trainer:
         self.master_process = self.rank == 0 # this process will do logging, checkpointing etc.
         self.dp_group = dist.new_group(backend='nccl', ranks=list(range(self.world_size)))
         self.dp_rank = dist.get_rank(self.dp_group)
-        self.dp_world_size = dist.get_world_size(self.dp_group)
         self.dp_local_rank = self.local_rank
-        
+        self.dp_world_size = dist.get_world_size(self.dp_group)
+        self.dp_master_process = self.dp_rank == 0
+        #TODO: get ep group
+
     def _init_dataset(self, config: TrainerConfig):
         if config.use_mock_data:
             from torch.utils.data import Dataset
@@ -102,13 +104,12 @@ class Trainer:
             class CustomDataset: ...
             self.train_dataset = CustomDataset(dataset_path=config.dataset_path, split="train")
             if config.do_val:
-                self.val_dataset = SlidingTokenDataset(
-                    dataset_path=config.dataset_path, split="validation")
-        train_sampler = DistributedSampler(self.train_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=True)
-        self.train_loader = DataLoader(self.train_dataset, batch_size=config.B, sampler=train_sampler, num_workers=0, pin_memory=True)
+                self.val_dataset = CustomDataset(dataset_path=config.dataset_path, split="validation")
+        self.train_sampler = DistributedSampler(self.train_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=True)
+        self.train_loader = DataLoader(self.train_dataset, batch_size=config.B, sampler=self.train_sampler, num_workers=0, pin_memory=True)
         if config.do_val:
-            val_sampler = DistributedSampler(self.val_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=False)
-            self.val_loader = DataLoader(self.val_dataset, batch_size=config.B, sampler=val_sampler, num_workers=0, pin_memory=True)
+            self.val_sampler = DistributedSampler(self.val_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=False)
+            self.val_loader = DataLoader(self.val_dataset, batch_size=config.B, sampler=self.val_sampler, num_workers=0, pin_memory=True)
         else:
             self.val_dataset = self.val_loader = None
 
@@ -246,12 +247,12 @@ class Trainer:
             return
         ckpt_prefix = ckpts[-1].replace("_model.pt", "")
         meta_path = f"{ckpt_prefix}_meta.pt"
-        meta = torch.load(meta_path, map_location=f'cuda:{self.dp_local_rank}')
+        meta = torch.load(meta_path, map_location=f'cuda:{self.local_rank}')
         # 1) model
-        state_dict = torch.load(f"{ckpt_prefix}_model.pt", map_location=f'cuda:{self.dp_local_rank}', weights_only=True)
+        state_dict = torch.load(f"{ckpt_prefix}_model.pt", map_location=f'cuda:{self.local_rank}', weights_only=True)
         self.raw_model.load_state_dict(state_dict)
         # 2) optimizer
-        opt_state_placeholder = {f"optimizer/dp_rank{self.dp_rank}": self.raw_optimizer.state_dict()}
+        opt_state_placeholder = {f"optimizer/rank{self.rank}": self.raw_optimizer.state_dict()}
         state_dict_loader.load(
             state_dict=opt_state_placeholder,
             storage_reader=FileSystemReader(f"{ckpt_prefix}_opt"),
@@ -270,12 +271,13 @@ class Trainer:
             print(f"=> Resumed from {self.log_dir} | next_step={self.start_step}, "
                 f"sampler_epoch={epoch}, dataloader_iter_idx={iter_idx}")
         # 5) RNG: finally load RNG state
-        rng = meta.get('rng_state', None)
-        if rng:
+        rng_path = f"{ckpt_prefix}_rng_rank{self.rank}.pt"
+        if os.path.exists(rng_path):
+            rng = torch.load(rng_path, map_location='cpu')
             torch.set_rng_state(rng['torch'].to(torch.uint8).cpu())
             torch.cuda.set_rng_state(rng['cuda'].to(torch.uint8).cpu(), self.dp_local_rank)
             np.random.set_state(rng['numpy'])
-        dist.barrier(self.dp_group)
+        dist.barrier()
         torch.cuda.synchronize()
     
     def train(self):
@@ -289,7 +291,7 @@ class Trainer:
             self.profiler.start()
         for step in tqdm(range(self.start_step, self.training_info["max_steps"]), 
                         initial=self.start_step, total=self.training_info["max_steps"], 
-                        desc="Train", disable=(self.dp_rank != 0)):
+                        desc="Train", disable=not self.master_process):
             self.one_step_results = {}
             t0 = time.time()
             last_step = (step == self.training_info["max_steps"] - 1)
@@ -332,7 +334,7 @@ class Trainer:
         with torch.no_grad():
             val_loss_accum = 0.0
             val_loss_steps = self.config.B * len(self.val_loader) // (self.config.B * self.dp_world_size)
-            for batch in tqdm(self.val_loader, desc="Val", disable=(self.dp_rank != 0)):
+            for batch in tqdm(self.val_loader, desc="Val", disable=not self.master_process):
                 x, y = batch["input_ids"], batch["labels"]
                 x, y = x.to(f'cuda:{self.dp_local_rank}'), y.to(f'cuda:{self.dp_local_rank}')
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
@@ -351,7 +353,7 @@ class Trainer:
         sampler_epoch_next = next_step // steps_per_epoch
         sampler_iter_idx_next = (next_step % steps_per_epoch) * self.training_info['grad_accum_steps']
         state_dict_saver.save(
-            state_dict={f"optimizer/dp_rank{self.dp_rank}": self.raw_optimizer.state_dict()},
+            state_dict={f"optimizer/rank{self.rank}": self.raw_optimizer.state_dict()},
             storage_writer=FileSystemWriter(f"{checkpoint_path}_opt"),
         )
         rng_state = {
@@ -359,6 +361,7 @@ class Trainer:
             'cuda': torch.cuda.get_rng_state(self.dp_local_rank),
             'numpy': np.random.get_state(),
         }
+        torch.save(rng_state, f"{checkpoint_path}_rng_rank{self.rank}.pt")
         if self.master_process:
             torch.save(self.raw_model.state_dict(), f"{checkpoint_path}_model.pt")
             checkpoint = {
