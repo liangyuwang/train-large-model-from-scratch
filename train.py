@@ -15,13 +15,14 @@ import torch.distributed as dist
 from torch.distributed.checkpoint import state_dict_saver, state_dict_loader
 from torch.distributed.checkpoint.filesystem import FileSystemWriter, FileSystemReader
 from torch.nn.parallel import DistributedDataParallel as DDP
-from transformers import AutoTokenizer, set_seed    #TODO: remove transformers
+from transformers import AutoTokenizer    #TODO: remove transformers
 
 from model import GPTConfig, GPT
 from distributed import DistributedOptimizer
 from utils import (
     get_training_args, 
     get_training_info,
+    set_seed,
     get_model_params,
     compute_mfu_from_time,
 )
