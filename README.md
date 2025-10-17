@@ -101,7 +101,7 @@ torchrun --nproc_per_node=8 train.py \
 All training scripts support multi-node training via environment variables:
 
 ```bash
-# Node 0 (master, IP: 192.168.1.100)
+# Node 0 (master, e.g. IP: 192.168.1.100)
 NUM_NODES=2 NODE_RANK=0 MASTER_ADDR=192.168.1.100 \
 bash scripts/debug_gpt_0.25b/pretrain.sh
 
@@ -110,20 +110,7 @@ NUM_NODES=2 NODE_RANK=1 MASTER_ADDR=192.168.1.100 \
 bash scripts/debug_gpt_0.25b/pretrain.sh
 ```
 
-**For SLURM clusters:**
-
-```bash
-sbatch scripts/slurm_multinode.sh
-```
-
-**For SSH-based automated launch:**
-
-```bash
-# Edit scripts/launch_multinode_ssh.sh to configure node IPs
-bash scripts/launch_multinode_ssh.sh
-```
-
-📖 **See [scripts/README.md](scripts/README.md) and [scripts/MULTI_NODE_GUIDE.md](scripts/MULTI_NODE_GUIDE.md) for comprehensive multi-node training guides**
+When running under some distributed training platforms, You do not need to specify --node_rank, --nnodes, or --master_addr. 'torchrun' automatically detects and uses these injected variables from 'env://' to set up distributed communication.
 
 ### 3. Custom Dataset
 

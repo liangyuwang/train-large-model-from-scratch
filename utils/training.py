@@ -1,5 +1,9 @@
 import math
 import argparse
+import numpy as np
+import random
+import os
+import torch
 
 def get_training_args():
     """
@@ -110,3 +114,21 @@ def get_training_info(
         "grad_accum_steps": grad_accum_steps,
         "total_tokens_per_step": total_tokens_per_step
     }
+
+def set_seed(seed: int, deterministic: bool = False):
+    """
+    Helper function for reproducible behavior to set the seed in `random`, `numpy`, `torch` and/or `tf` (if installed).
+
+    Args:
+        seed (`int`):
+            The seed to set.
+        deterministic (`bool`, *optional*, defaults to `False`):
+            Whether to use deterministic algorithms where available. Can slow down training.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    # ^^ safe to call this function even if cuda is not available
+    if deterministic:
+        torch.use_deterministic_algorithms(True)
