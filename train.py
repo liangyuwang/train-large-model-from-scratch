@@ -15,7 +15,6 @@ import torch.distributed as dist
 from torch.distributed.checkpoint import state_dict_saver, state_dict_loader
 from torch.distributed.checkpoint.filesystem import FileSystemWriter, FileSystemReader
 from torch.nn.parallel import DistributedDataParallel as DDP
-from transformers import AutoTokenizer    #TODO: remove transformers
 
 from model import GPTConfig, GPT
 from distributed import DistributedOptimizer
@@ -115,7 +114,6 @@ class Trainer:
 
     def _init_model(self, config: TrainerConfig, model_config: GPTConfig = None):
         torch.set_float32_matmul_precision('high')
-        self.tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_name)
         self.model_config = GPTConfig() if model_config is None else model_config
         model = GPT(self.model_config)
         params_config = get_model_params(self.model_config)
