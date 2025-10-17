@@ -15,7 +15,6 @@ import torch.distributed as dist
 from torch.distributed.checkpoint import state_dict_saver, state_dict_loader
 from torch.distributed.checkpoint.filesystem import FileSystemWriter, FileSystemReader
 from torch.nn.parallel import DistributedDataParallel as DDP
-from transformers import AutoTokenizer    #TODO: remove transformers
 
 from model import GPTConfig, GPT
 from distributed import DistributedOptimizer
@@ -40,7 +39,6 @@ class TrainerConfig:
     B: int = 8                      # micro batch size per device
     T: int = 4096                   # sequence length
     shift: int = 1                  # next-token prediction if 1
-    use_muon: bool = False
     max_lr: float = 4e-3
     min_lr: float = 3e-5
     weight_decay: float = 0.1
@@ -116,7 +114,6 @@ class Trainer:
 
     def _init_model(self, config: TrainerConfig, model_config: GPTConfig = None):
         torch.set_float32_matmul_precision('high')
-        self.tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_name)
         self.model_config = GPTConfig() if model_config is None else model_config
         model = GPT(self.model_config)
         params_config = get_model_params(self.model_config)
@@ -187,7 +184,6 @@ class Trainer:
             f"B{config.total_batch_size}_"
             f"T{config.T}_"
             f"DP{self.dp_world_size}_"
-            f"Muon{self.config.use_muon}"
         )
         os.makedirs(self.log_dir, exist_ok=True)
         self.log_file = os.path.join(self.log_dir, f"log.txt")
