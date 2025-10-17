@@ -34,11 +34,9 @@ class TrainerConfig:
     dataset_path: str = "../data/fineweb-edu-sample-10BT/"
     use_mock_data: bool = False
     mock_data_num_samples: int = 1280
-    tokenizer_name: str = "gpt2"
     total_batch_size: int = 524288  # 2**19, ~0.5M tokens
     B: int = 8                      # micro batch size per device
     T: int = 4096                   # sequence length
-    shift: int = 1                  # next-token prediction if 1
     max_lr: float = 4e-3
     min_lr: float = 3e-5
     weight_decay: float = 0.1
@@ -140,7 +138,7 @@ class Trainer:
             yield
         def trace_handler(prof):
             if self.master_process:
-                prof.export_chrome_trace(f"{self.log_dir}/rank{self.dp_rank}_trace.json")
+                prof.export_chrome_trace(f"{self.log_dir}/rank{self.rank}_trace.json")
         if config.use_profiler:
             assert self.config.steps_to_profile[0] >= 1, "steps_to_profile[0] should be >= 1"
             self.profiler = torch.profiler.profile(
@@ -185,10 +183,11 @@ class Trainer:
             f"T{config.T}_"
             f"DP{self.dp_world_size}_"
         )
-        os.makedirs(self.log_dir, exist_ok=True)
-        self.log_file = os.path.join(self.log_dir, f"log.txt")
-        with open(self.log_file, "w") as f: # open for writing to clear the file
-            pass
+        if self.master_process:
+            os.makedirs(self.log_dir, exist_ok=True)
+            self.log_file = os.path.join(self.log_dir, f"log.txt")
+            with open(self.log_file, "w") as f: # open for writing to clear the file
+                pass
 
     def _lr_scheduler(self, it, max_steps, warmup_steps, max_lr, min_lr):
         # 1) linear warmup for warmup_iters steps
