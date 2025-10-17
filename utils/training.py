@@ -22,7 +22,6 @@ def get_training_args():
     parser.add_argument("--B", type=int, default=8, help="Micro batch size per device")
     parser.add_argument("--T", type=int, default=4096, help="Sequence length")
     parser.add_argument("--shift", type=int, default=1, help="Shift for next-token prediction")
-    parser.add_argument("--use_muon", action="store_true", help="Use Muon optimizer for Attention and MLP layers")
     parser.add_argument("--max_lr", type=float, default=4e-3, help="Maximum learning rate")
     parser.add_argument("--min_lr", type=float, default=3e-5, help="Minimum learning rate")
     parser.add_argument("--weight_decay", type=float, default=0.1, help="Weight decay for optimizer")

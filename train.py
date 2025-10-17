@@ -40,7 +40,6 @@ class TrainerConfig:
     B: int = 8                      # micro batch size per device
     T: int = 4096                   # sequence length
     shift: int = 1                  # next-token prediction if 1
-    use_muon: bool = False
     max_lr: float = 4e-3
     min_lr: float = 3e-5
     weight_decay: float = 0.1
@@ -187,7 +186,6 @@ class Trainer:
             f"B{config.total_batch_size}_"
             f"T{config.T}_"
             f"DP{self.dp_world_size}_"
-            f"Muon{self.config.use_muon}"
         )
         os.makedirs(self.log_dir, exist_ok=True)
         self.log_file = os.path.join(self.log_dir, f"log.txt")
