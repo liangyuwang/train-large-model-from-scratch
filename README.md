@@ -63,7 +63,6 @@ A minimal, hackable pre-training stack for GPT-style language models. This proje
 
 - Python 3.10+
 - PyTorch 2.0+ with CUDA/NCCL support
-- transformers (for tokenizer only)
 - tqdm
 - numpy
 
