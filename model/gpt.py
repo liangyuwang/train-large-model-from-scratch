@@ -55,3 +55,26 @@ class GPT(nn.Module):
         logits = self.lm_head(x) # (B, T, vocab_size)
         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
         return logits, loss
+    
+    def get_flops_per_fwd_bwd(self, batch_size, seq_len):
+        """
+        Approximate model FLOPs for forward and backward pass.
+        """
+        # Q, K, V projection (3D->D) + Out projection (D->D)
+        qkv_out_flops = 8 * batch_size * seq_len * self.config.hidden_size * self.config.hidden_size  # 6BLD^2 + 2BLD^2
+        # QK^T + softmaxV
+        attn_matmul_flops = 4 * batch_size * seq_len * seq_len * self.config.hidden_size
+        attn_flops = qkv_out_flops + attn_matmul_flops
+        # FFN: SwiGLU = gate_proj(D->D_int) + up_proj(D->D_int) + elementwise + down_proj(D_int->D)
+        intermediate_size = self.config.moe_intermediate_size if self.use_moe else self.config.intermediate_size
+        ffn_flops = 2 * batch_size * seq_len * self.config.hidden_size * intermediate_size \
+                + 2 * batch_size * seq_len * self.config.hidden_size * intermediate_size \
+                + batch_size * seq_len * intermediate_size \
+                + 2 * batch_size * seq_len * intermediate_size * self.config.hidden_size
+        expert_gate_flops = 2 * batch_size * seq_len * self.config.hidden_size * self.config.num_experts  # gate_proj(D->E)
+        if self.use_moe:
+            per_layer_flops = attn_flops + expert_gate_flops + self.config.num_experts_per_tok * ffn_flops    # FLOPs per layer
+        else:
+            per_layer_flops = attn_flops + ffn_flops    # total FLOPs
+        total_flops = 3 * self.config.num_layer * per_layer_flops  # fwd + bwd ≈ 3 × fwd FLOPs
+        return total_flops

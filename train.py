@@ -23,7 +23,7 @@ from utils import (
     get_training_info,
     set_seed,
     get_model_params,
-    compute_mfu_from_time,
+    compute_mfu,
 )
 
 @dataclass
@@ -313,11 +313,7 @@ class Trainer:
             tokens_processed = self.config.B * self.config.T * self.training_info["grad_accum_steps"] * self.dp_world_size
             tokens_per_sec = tokens_processed / dt
             mfu, actual, peak = compute_mfu_from_time(
-                self.config.B, self.config.T, self.model_config.hidden_size, 
-                self.model_config.moe_intermediate_size if self.model_config.use_moe else self.model_config.intermediate_size,
-                self.model_config.num_experts_per_tok if self.model_config.use_moe else 1, 
-                self.model_config.num_experts if self.model_config.use_moe else 1,
-                self.model_config.num_layer, dt, self.training_info["grad_accum_steps"], dtype="bf16")
+                self.raw_model, self.config.B, self.config.T, dt, self.training_info["grad_accum_steps"], dtype="bf16")
             if self.master_process:
                 tqdm.write(f"step {step:5d} | loss: {self.one_step_results['loss'].item():.6f} | lr {self.one_step_results['lr']:.4e} | grad norm: {self.one_step_results['grad_norm']:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f} | MFU: {mfu*100:.2f}%")
                 with open(self.log_file, "a") as f:
