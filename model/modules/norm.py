@@ -6,9 +6,10 @@ from ..config import GPTConfig
 class LayerNorm(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
+        self.device = torch.cuda.current_device()
         self.variance_epsilon = 1e-6
         self.hidden_size = config.hidden_size
-        self.weight = nn.Parameter(torch.ones(self.hidden_size))
+        self.weight = nn.Parameter(torch.ones(self.hidden_size, device=self.device))
 
     def forward(self, x: torch.Tensor):
         input_dtype = x.dtype

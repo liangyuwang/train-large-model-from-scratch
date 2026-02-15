@@ -93,6 +93,7 @@ class Attention(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
         assert config.hidden_size % config.num_attention_heads == 0
+        self.device = torch.cuda.current_device()
         self.num_attention_heads = config.num_attention_heads
         self.num_key_value_heads = config.num_key_value_heads
         self.head_dim = config.hidden_size // config.num_attention_heads
@@ -100,11 +101,26 @@ class Attention(nn.Module):
         self.dropout = config.dropout
         self.pos = None
         # key, query, value projections for all heads, but in a batch        
-        self.q_proj = nn.Linear(config.hidden_size, config.num_attention_heads * self.head_dim, bias=False)
-        self.k_proj = nn.Linear(config.hidden_size, config.num_key_value_heads * self.head_dim, bias=False)
-        self.v_proj = nn.Linear(config.hidden_size, config.num_key_value_heads * self.head_dim, bias=False)
+        self.q_proj = nn.Linear(config.hidden_size, config.num_attention_heads * self.head_dim, bias=False, device=self.device)
+        self.k_proj = nn.Linear(config.hidden_size, config.num_key_value_heads * self.head_dim, bias=False, device=self.device)
+        self.v_proj = nn.Linear(config.hidden_size, config.num_key_value_heads * self.head_dim, bias=False, device=self.device)
         # output projection
-        self.c_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
+        self.c_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False, device=self.device)
+        self._init_weights(config.seed)
+    
+    def _init_weights(self, base_seed: int):
+        with torch.random.fork_rng(devices=[self.q_proj.weight.device]):
+            torch.manual_seed(base_seed)
+            torch.nn.init.normal_(self.q_proj.weight, mean=0.0, std=self.config.init_std)
+        with torch.random.fork_rng(devices=[self.k_proj.weight.device]):
+            torch.manual_seed(base_seed)
+            torch.nn.init.normal_(self.k_proj.weight, mean=0.0, std=self.config.init_std)
+        with torch.random.fork_rng(devices=[self.v_proj.weight.device]):
+            torch.manual_seed(base_seed)
+            torch.nn.init.normal_(self.v_proj.weight, mean=0.0, std=self.config.init_std)
+        with torch.random.fork_rng(devices=[self.c_proj.weight.device]):
+            torch.manual_seed(base_seed)
+            torch.nn.init.normal_(self.c_proj.weight, mean=0.0, std=self.config.init_std)
 
     def forward(self, x: torch.Tensor):
         B, T_local, C = x.size()

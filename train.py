@@ -132,7 +132,6 @@ class Trainer:
             print(f"Params config: {params_config}")
         if config.use_compile and hasattr(torch, 'compile'):
             model = torch.compile(model)
-        model = model.to(f'cuda:{self.dp_local_rank}')
         #TODO: Here ZeRO-1 actually only need 'reduce' not 'all-reduce' used in DDP, we can develop a custom wrapper for ZeRO-1
         self.model = DDP(model, process_group=self.dp_group, find_unused_parameters=True, gradient_as_bucket_view=True)
         self.raw_model = self.model.module
