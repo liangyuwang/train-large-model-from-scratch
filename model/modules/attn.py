@@ -3,13 +3,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..config import GPTConfig
+from ...distributed import (
+    parallel_state,
+    ulysses_all_to_all,
+)
 
-"""
-Features:
-    1. FlashMLA for long context
-    2. Slide Window
-    3. MTP
-"""
 
 def rope_impl(q, k, position_ids, rope_theta=10000.0):
     """
@@ -109,18 +107,53 @@ class Attention(nn.Module):
         self.c_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
 
     def forward(self, x: torch.Tensor):
-        B, T, C = x.size()
+        B, T_local, C = x.size()
+        sp_group = parallel_state.get_sep_group()
+        sp_size = parallel_state.get_sep_world_size()
+        sp_rank = parallel_state.get_sep_rank()
         q, k, v = self.q_proj(x), self.k_proj(x), self.v_proj(x) # (B, T, n_embd)
-        q = q.view(B, T, self.num_attention_heads, self.head_dim).transpose(-2, -3) # (B, nh, T, hs)
-        k = k.view(B, T, self.num_key_value_heads, self.head_dim).transpose(-2, -3) # (B, nh, T, hs)
-        v = v.view(B, T, self.num_key_value_heads, self.head_dim).transpose(-2, -3) # (B, nh, T, hs)
+        q = q.view(B, T_local, self.num_attention_heads, self.head_dim).transpose(-2, -3) # (B, nh, T, hs)
+        k = k.view(B, T_local, self.num_key_value_heads, self.head_dim).transpose(-2, -3) # (B, nh, T, hs)
+        v = v.view(B, T_local, self.num_key_value_heads, self.head_dim).transpose(-2, -3) # (B, nh, T, hs)
         k, v = gqa_impl(k, v, self.num_key_value_heads, self.num_attention_heads)
-        if self.pos is None or self.pos.size(0) != T:
-            self.pos = torch.arange(T, device=x.device).unsqueeze(0)
+        start_pos = sp_rank * T_local
+        end_pos = start_pos + T_local
+        if self.pos is None or self.pos.size(1) != T_local or self.pos[0, 0] != start_pos:
+            self.pos = torch.arange(start_pos, end_pos, device=x.device).unsqueeze(0)
         q, k = rope_impl(q, k, self.pos)
+        
+        H = self.num_attention_heads
+        if sp_size > 1:
+            # sp all to all
+            assert H % sp_size == 0
+            H_local = H // sp_size
+            qkv = torch.stack([q, k, v], dim=0)
+            qkv = qkv.reshape(3, B, sp_size, H_local, T_local, self.head_dim)
+            qkv = qkv.transpose(0, 2).contiguous()
+            qkv = ulysses_all_to_all(qkv, sp_group)
+            qkv = qkv.transpose(0, 2).contiguous()
+            T_full = sp_size * T_local
+            qkv = qkv.view(3, B, H_local, T_full, self.head_dim)
+            q_local, k_local, v_local = qkv[0], qkv[1], qkv[2]
+        else:
+            q_local, k_local, v_local = q, k, v
+
+        # local attention computation
         dropout_p = self.dropout if self.training else 0.0
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=dropout_p, is_causal=True)
-        y = y.transpose(-2, -3).reshape(B, T, C)
+        y = F.scaled_dot_product_attention(
+            q_local, k_local, v_local, 
+            attn_mask=None, dropout_p=dropout_p, is_causal=True
+        )
+
+        if sp_size > 1:
+            # sp all to all back
+            y = y.view(B, H_local, sp_size, T_local, self.head_dim)
+            y = y.transpose(0, 2).contiguous()
+            y = ulysses_all_to_all(y, sp_group)
+            y = y.transpose(0, 1).contiguous()
+        y = y.view(B, H, T_local, self.head_dim)
+
+        y = y.transpose(-2, -3).reshape(B, T_local, C)
         # output projection
         y = self.c_proj(y)
         return y

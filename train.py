@@ -17,7 +17,10 @@ from torch.distributed.checkpoint.filesystem import FileSystemWriter, FileSystem
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from model import GPTConfig, GPT
-from distributed import DistributedOptimizer
+from distributed import (
+    DistributedOptimizer,
+    parallel_state,
+)
 from utils import (
     get_training_args, 
     get_training_info,
@@ -51,7 +54,6 @@ class TrainerConfig:
     split_rate: float | None = None # will be set in __post_init__
     do_save: bool = True
     save_every_steps: int = 5000
-    shift_every_steps: int | None = None
     use_compile: bool = False
     use_profiler: bool = False
     steps_to_profile: list[int] = field(default_factory=lambda: [15, 20])
@@ -72,12 +74,23 @@ class Trainer:
         torch.cuda.set_device(device)
         set_seed(config.seed + self.rank)
         self.master_process = self.rank == 0 # this process will do logging, checkpointing etc.
-        self.dp_group = dist.new_group(backend='nccl', ranks=list(range(self.world_size)))
-        self.dp_rank = dist.get_rank(self.dp_group)
-        self.dp_local_rank = self.local_rank
-        self.dp_world_size = dist.get_world_size(self.dp_group)
+        
+        parallel_state.initialize_model_parallel(sep_size=8)
+        self.dp_group = parallel_state.get_dp_group()
+        self.dp_rank = parallel_state.get_dp_rank()
+        self.dp_local_rank = parallel_state.get_dp_local_rank()
+        self.dp_world_size = parallel_state.get_dp_world_size()
         self.dp_master_process = self.dp_rank == 0
-        #TODO: get ep group
+        self.sp_group = parallel_state.get_sp_group()
+        self.sp_rank = parallel_state.get_sp_rank()
+        self.sp_local_rank = parallel_state.get_sp_local_rank()
+        self.sp_world_size = parallel_state.get_sp_world_size()
+        self.sp_master_process = self.sp_rank == 0
+        self.dp_sp_group = parallel_state.get_dp_sp_group()
+        self.dp_sp_rank = parallel_state.get_dp_sp_rank()
+        self.dp_sp_local_rank = parallel_state.get_dp_sp_local_rank()
+        self.dp_sp_world_size = parallel_state.get_dp_sp_world_size()
+        self.dp_sp_master_process = self.dp_sp_rank == 0
 
     def _init_dataset(self, config: TrainerConfig):
         if config.use_mock_data:
@@ -204,14 +217,21 @@ class Trainer:
         
     def _one_training_micro_step(self, config: TrainerConfig, micro_step: int, data_batch: dict):
         x, y = data_batch["input_ids"], data_batch["labels"]
-        x, y = x.to(f'cuda:{self.dp_local_rank}'), y.to(f'cuda:{self.dp_local_rank}')
+        B, T = x.shape
+        seq_chunk_size = T // self.sp_world_size
+        seq_start_idx = self.sp_local_rank * seq_chunk_size
+        seq_end_idx = (self.sp_local_rank + 1) * seq_chunk_size
+        x = x[:, seq_start_idx:seq_end_idx]
+        y = y[:, seq_start_idx:seq_end_idx]
+        x = x.to(f'cuda:{self.dp_sp_local_rank}')
+        y = y.to(f'cuda:{self.dp_sp_local_rank}')
         with self.profiler_record_fn("forward"):
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 _, loss = self.model(x.reshape(x.shape[0],-1), y.reshape(y.shape[0],-1))
         loss = loss / self.training_info["grad_accum_steps"]
         with self.profiler_record_fn("backward"):
             loss.backward()
-        return loss.detach()
+        return loss.logging_loss
 
     def _one_training_step(self, config: TrainerConfig, step: int):
         self.model.train()
@@ -225,7 +245,6 @@ class Trainer:
                 _, batch = next(self.train_loader_iter)
             self.model.require_backward_grad_sync = (micro_step == self.training_info["grad_accum_steps"] - 1)
             loss_accum += self._one_training_micro_step(config, micro_step, batch)
-        dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
         norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), config.grad_clip_value)
         lr = self._lr_scheduler(step, self.training_info["max_steps"], config.warmup_steps, config.max_lr, config.min_lr)
         for param_group in self.optimizer.param_groups:

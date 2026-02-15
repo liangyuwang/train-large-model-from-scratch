@@ -7,6 +7,8 @@ from .config import GPTConfig
 from .modules.attn import Attention
 from .modules.mlp import MLP, MoE
 from .modules.norm import LayerNorm
+from .modules.loss import CrossEntropyLoss
+from ...distributed import parallel_state
 
 class Block(nn.Module):
 
@@ -40,6 +42,7 @@ class GPT(nn.Module):
         if config.tied_lm_head:
             self.lm_head.weight = self.wte.weight
         self.apply(self._init_weights)
+        self.loss_fn = CrossEntropyLoss()
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear) or isinstance(module, nn.Embedding):
@@ -53,7 +56,7 @@ class GPT(nn.Module):
             x = block(x)
         x = self.lnf(x)
         logits = self.lm_head(x) # (B, T, vocab_size)
-        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+        loss = self.loss_fn(logits, targets)
         return logits, loss
     
     def get_flops_per_fwd_bwd(self, batch_size, seq_len):
