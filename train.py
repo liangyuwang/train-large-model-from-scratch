@@ -15,15 +15,15 @@ import torch.distributed as dist
 from torch.distributed.checkpoint import state_dict_saver, state_dict_loader
 from torch.distributed.checkpoint.filesystem import FileSystemWriter, FileSystemReader
 from torch.nn.parallel import DistributedDataParallel as DDP
-from transformers import AutoTokenizer, set_seed    #TODO: remove transformers
 
 from model import GPTConfig, GPT
 from distributed import DistributedOptimizer
 from utils import (
     get_training_args, 
     get_training_info,
+    set_seed,
     get_model_params,
-    compute_mfu_from_time,
+    compute_mfu,
 )
 
 @dataclass
@@ -34,12 +34,9 @@ class TrainerConfig:
     dataset_path: str = "../data/fineweb-edu-sample-10BT/"
     use_mock_data: bool = False
     mock_data_num_samples: int = 1280
-    tokenizer_name: str = "gpt2"
     total_batch_size: int = 524288  # 2**19, ~0.5M tokens
     B: int = 8                      # micro batch size per device
     T: int = 4096                   # sequence length
-    shift: int = 1                  # next-token prediction if 1
-    use_muon: bool = False
     max_lr: float = 4e-3
     min_lr: float = 3e-5
     weight_decay: float = 0.1
@@ -67,16 +64,21 @@ class TrainerConfig:
 
 class Trainer:
     def _init_setup(self, config: TrainerConfig):
-        set_seed(config.seed)
-        dist.init_process_group(backend='nccl')
-        self.dp_rank = int(os.environ['RANK'])
-        self.dp_local_rank = int(os.environ['LOCAL_RANK'])
-        self.dp_world_size = int(os.environ['WORLD_SIZE'])
-        self.dp_group = dist.new_group(backend='nccl', ranks=list(range(self.dp_world_size)))
-        device = f'cuda:{self.dp_local_rank}'
+        self.rank = int(os.environ['RANK'])
+        self.local_rank = int(os.environ['LOCAL_RANK'])
+        self.world_size = int(os.environ['WORLD_SIZE'])
+        dist.init_process_group(backend='nccl', init_method='env://')
+        device = f'cuda:{self.local_rank}'
         torch.cuda.set_device(device)
-        self.master_process = self.dp_rank == 0 # this process will do logging, checkpointing etc.
-        
+        set_seed(config.seed + self.rank)
+        self.master_process = self.rank == 0 # this process will do logging, checkpointing etc.
+        self.dp_group = dist.new_group(backend='nccl', ranks=list(range(self.world_size)))
+        self.dp_rank = dist.get_rank(self.dp_group)
+        self.dp_local_rank = self.local_rank
+        self.dp_world_size = dist.get_world_size(self.dp_group)
+        self.dp_master_process = self.dp_rank == 0
+        #TODO: get ep group
+
     def _init_dataset(self, config: TrainerConfig):
         if config.use_mock_data:
             from torch.utils.data import Dataset
@@ -99,19 +101,17 @@ class Trainer:
             class CustomDataset: ...
             self.train_dataset = CustomDataset(dataset_path=config.dataset_path, split="train")
             if config.do_val:
-                self.val_dataset = SlidingTokenDataset(
-                    dataset_path=config.dataset_path, split="validation")
-        train_sampler = DistributedSampler(self.train_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=True)
-        self.train_loader = DataLoader(self.train_dataset, batch_size=config.B, sampler=train_sampler, num_workers=0, pin_memory=True)
+                self.val_dataset = CustomDataset(dataset_path=config.dataset_path, split="validation")
+        self.train_sampler = DistributedSampler(self.train_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=True)
+        self.train_loader = DataLoader(self.train_dataset, batch_size=config.B, sampler=self.train_sampler, num_workers=0, pin_memory=True)
         if config.do_val:
-            val_sampler = DistributedSampler(self.val_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=False)
-            self.val_loader = DataLoader(self.val_dataset, batch_size=config.B, sampler=val_sampler, num_workers=0, pin_memory=True)
+            self.val_sampler = DistributedSampler(self.val_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=False)
+            self.val_loader = DataLoader(self.val_dataset, batch_size=config.B, sampler=self.val_sampler, num_workers=0, pin_memory=True)
         else:
             self.val_dataset = self.val_loader = None
 
     def _init_model(self, config: TrainerConfig, model_config: GPTConfig = None):
         torch.set_float32_matmul_precision('high')
-        self.tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_name)
         self.model_config = GPTConfig() if model_config is None else model_config
         model = GPT(self.model_config)
         params_config = get_model_params(self.model_config)
@@ -138,7 +138,7 @@ class Trainer:
             yield
         def trace_handler(prof):
             if self.master_process:
-                prof.export_chrome_trace(f"{self.log_dir}/rank{self.dp_rank}_trace.json")
+                prof.export_chrome_trace(f"{self.log_dir}/rank{self.rank}_trace.json")
         if config.use_profiler:
             assert self.config.steps_to_profile[0] >= 1, "steps_to_profile[0] should be >= 1"
             self.profiler = torch.profiler.profile(
@@ -182,12 +182,12 @@ class Trainer:
             f"B{config.total_batch_size}_"
             f"T{config.T}_"
             f"DP{self.dp_world_size}_"
-            f"Muon{self.config.use_muon}"
         )
-        os.makedirs(self.log_dir, exist_ok=True)
-        self.log_file = os.path.join(self.log_dir, f"log.txt")
-        with open(self.log_file, "w") as f: # open for writing to clear the file
-            pass
+        if self.master_process:
+            os.makedirs(self.log_dir, exist_ok=True)
+            self.log_file = os.path.join(self.log_dir, f"log.txt")
+            with open(self.log_file, "w") as f: # open for writing to clear the file
+                pass
 
     def _lr_scheduler(self, it, max_steps, warmup_steps, max_lr, min_lr):
         # 1) linear warmup for warmup_iters steps
@@ -243,12 +243,12 @@ class Trainer:
             return
         ckpt_prefix = ckpts[-1].replace("_model.pt", "")
         meta_path = f"{ckpt_prefix}_meta.pt"
-        meta = torch.load(meta_path, map_location=f'cuda:{self.dp_local_rank}')
+        meta = torch.load(meta_path, map_location=f'cuda:{self.local_rank}')
         # 1) model
-        state_dict = torch.load(f"{ckpt_prefix}_model.pt", map_location=f'cuda:{self.dp_local_rank}', weights_only=True)
+        state_dict = torch.load(f"{ckpt_prefix}_model.pt", map_location=f'cuda:{self.local_rank}', weights_only=True)
         self.raw_model.load_state_dict(state_dict)
         # 2) optimizer
-        opt_state_placeholder = {f"optimizer/dp_rank{self.dp_rank}": self.raw_optimizer.state_dict()}
+        opt_state_placeholder = {f"optimizer/rank{self.rank}": self.raw_optimizer.state_dict()}
         state_dict_loader.load(
             state_dict=opt_state_placeholder,
             storage_reader=FileSystemReader(f"{ckpt_prefix}_opt"),
@@ -267,12 +267,13 @@ class Trainer:
             print(f"=> Resumed from {self.log_dir} | next_step={self.start_step}, "
                 f"sampler_epoch={epoch}, dataloader_iter_idx={iter_idx}")
         # 5) RNG: finally load RNG state
-        rng = meta.get('rng_state', None)
-        if rng:
+        rng_path = f"{ckpt_prefix}_rng_rank{self.rank}.pt"
+        if os.path.exists(rng_path):
+            rng = torch.load(rng_path, map_location='cpu')
             torch.set_rng_state(rng['torch'].to(torch.uint8).cpu())
             torch.cuda.set_rng_state(rng['cuda'].to(torch.uint8).cpu(), self.dp_local_rank)
             np.random.set_state(rng['numpy'])
-        dist.barrier(self.dp_group)
+        dist.barrier()
         torch.cuda.synchronize()
     
     def train(self):
@@ -286,7 +287,7 @@ class Trainer:
             self.profiler.start()
         for step in tqdm(range(self.start_step, self.training_info["max_steps"]), 
                         initial=self.start_step, total=self.training_info["max_steps"], 
-                        desc="Train", disable=(self.dp_rank != 0)):
+                        desc="Train", disable=not self.master_process):
             self.one_step_results = {}
             t0 = time.time()
             last_step = (step == self.training_info["max_steps"] - 1)
@@ -311,12 +312,8 @@ class Trainer:
             dt = t1 - t0 # time difference in seconds
             tokens_processed = self.config.B * self.config.T * self.training_info["grad_accum_steps"] * self.dp_world_size
             tokens_per_sec = tokens_processed / dt
-            mfu, actual, peak = compute_mfu_from_time(
-                self.config.B, self.config.T, self.model_config.hidden_size, 
-                self.model_config.moe_intermediate_size if self.model_config.use_moe else self.model_config.intermediate_size,
-                self.model_config.num_experts_per_tok if self.model_config.use_moe else 1, 
-                self.model_config.num_experts if self.model_config.use_moe else 1,
-                self.model_config.num_layer, dt, self.training_info["grad_accum_steps"], dtype="bf16")
+            mfu, actual, peak = compute_mfu(
+                self.raw_model, self.config.B, self.config.T, dt, self.training_info["grad_accum_steps"], dtype="bf16")
             if self.master_process:
                 tqdm.write(f"step {step:5d} | loss: {self.one_step_results['loss'].item():.6f} | lr {self.one_step_results['lr']:.4e} | grad norm: {self.one_step_results['grad_norm']:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f} | MFU: {mfu*100:.2f}%")
                 with open(self.log_file, "a") as f:
@@ -329,7 +326,7 @@ class Trainer:
         with torch.no_grad():
             val_loss_accum = 0.0
             val_loss_steps = self.config.B * len(self.val_loader) // (self.config.B * self.dp_world_size)
-            for batch in tqdm(self.val_loader, desc="Val", disable=(self.dp_rank != 0)):
+            for batch in tqdm(self.val_loader, desc="Val", disable=not self.master_process):
                 x, y = batch["input_ids"], batch["labels"]
                 x, y = x.to(f'cuda:{self.dp_local_rank}'), y.to(f'cuda:{self.dp_local_rank}')
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
@@ -348,7 +345,7 @@ class Trainer:
         sampler_epoch_next = next_step // steps_per_epoch
         sampler_iter_idx_next = (next_step % steps_per_epoch) * self.training_info['grad_accum_steps']
         state_dict_saver.save(
-            state_dict={f"optimizer/dp_rank{self.dp_rank}": self.raw_optimizer.state_dict()},
+            state_dict={f"optimizer/rank{self.rank}": self.raw_optimizer.state_dict()},
             storage_writer=FileSystemWriter(f"{checkpoint_path}_opt"),
         )
         rng_state = {
@@ -356,6 +353,7 @@ class Trainer:
             'cuda': torch.cuda.get_rng_state(self.dp_local_rank),
             'numpy': np.random.get_state(),
         }
+        torch.save(rng_state, f"{checkpoint_path}_rng_rank{self.rank}.pt")
         if self.master_process:
             torch.save(self.raw_model.state_dict(), f"{checkpoint_path}_model.pt")
             checkpoint = {

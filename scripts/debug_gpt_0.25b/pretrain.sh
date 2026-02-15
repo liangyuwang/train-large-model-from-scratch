@@ -29,7 +29,7 @@ echo "==================================="
 echo "Distributed Training Configuration"
 echo "==================================="
 echo "NUM_NODES:    $NUM_NODES"
-echo "NUM_GPUS:     $NUM_GPUS"
+echo "NUM_GPUS_PER_NODE:     $NUM_GPUS"
 echo "NODE_RANK:    $NODE_RANK"
 echo "MASTER_ADDR:  $MASTER_ADDR"
 echo "MASTER_PORT:  $MASTER_PORT"
@@ -52,11 +52,9 @@ TRAINING_ARGS="\
   --use_mock_data \
   --mock_data_num_samples 12800 \
   --log_dir ./log \
-  --tokenizer_name gpt2 \
   --total_batch_size 2097152 \
   --B $B \
   --T 4096 \
-  --shift 1 \
   --max_lr 6e-4 \
   --min_lr 6e-5 \
   --weight_decay 0.1 \

@@ -12,9 +12,9 @@
 #
 # Example for 2 nodes:
 #   Node 0 (master, IP: 192.168.1.100):
-#     NUM_NODES=2 NODE_RANK=0 MASTER_ADDR=192.168.1.100 bash scripts/debug_gpt_0.3b_a0.17b/pretrain.sh
+#     NUM_NODES=2 NODE_RANK=0 MASTER_ADDR=192.168.1.100 bash scripts/debug_gpt_0.25b/pretrain.sh
 #   Node 1:
-#     NUM_NODES=2 NODE_RANK=1 MASTER_ADDR=192.168.1.100 bash scripts/debug_gpt_0.3b_a0.17b/pretrain.sh
+#     NUM_NODES=2 NODE_RANK=1 MASTER_ADDR=192.168.1.100 bash scripts/debug_gpt_0.25b/pretrain.sh
 #
 
 # Multi-node configuration (can be overridden by environment variables)
@@ -23,7 +23,7 @@ NUM_GPUS=${NUM_GPUS:-8}
 NODE_RANK=${NODE_RANK:-0}
 MASTER_ADDR=${MASTER_ADDR:-localhost}
 MASTER_PORT=${MASTER_PORT:-29500}
-B=${B:-8}
+B=${B:-1}
 
 echo "==================================="
 echo "Distributed Training Configuration"
@@ -44,7 +44,7 @@ DISTRIBUTED_ARGS="\
   --master_port=$MASTER_PORT \
 "
 
-EXP_NAME="debug_gpt_0.3b_a0.17b"
+EXP_NAME="debug_gpt_0.25b"
 TRAINING_ARGS="\
   --exp_name $EXP_NAME \
   --seed 1337 \
@@ -70,17 +70,13 @@ TRAINING_ARGS="\
 MODEL_ARGS="\
   --block_size 4096 \
   --vocab_size 50304 \
-  --num_layer 12 \
-  --num_attention_heads 32 \
+  --num_layer 36 \
+  --num_attention_heads 16 \
   --num_key_value_heads 4 \
-  --hidden_size 768 \
-  --intermediate_size 3072 \
+  --hidden_size 2048 \
+  --intermediate_size 10240 \
   --tied_lm_head \
   --dropout 0.0 \
-  --use_moe \
-  --num_experts 8 \
-  --num_experts_per_tok 2 \
-  --moe_intermediate_size 768 \
 "
 
 torchrun $DISTRIBUTED_ARGS train.py $TRAINING_ARGS $MODEL_ARGS

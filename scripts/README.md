@@ -7,14 +7,10 @@ This directory contains training scripts and launch utilities for single-node an
 ```
 scripts/
 ├── README.md                      # This file
-├── MULTI_NODE_GUIDE.md           # Detailed multi-node training guide
 ├── debug_gpt_0.25b/
 │   └── pretrain.sh               # 0.25B model training script
 ├── debug_gpt_0.3b_a0.17b/
 │   └── pretrain.sh               # 0.3B MoE model training script
-├── slurm_multinode.sh            # SLURM cluster launch script
-├── launch_multinode_ssh.sh       # SSH-based multi-node launcher
-└── stop_multinode_ssh.sh         # Stop multi-node training
 ```
 
 ## Quick Start
@@ -54,29 +50,6 @@ NUM_NODES=2 \
 NODE_RANK=1 \
 MASTER_ADDR=192.168.1.100 \
 bash scripts/debug_gpt_0.25b/pretrain.sh
-```
-
-#### Option B: SLURM Cluster
-
-```bash
-# Edit slurm_multinode.sh to configure:
-# - Number of nodes: #SBATCH --nodes=N
-# - Model script: MODEL_SCRIPT variable
-
-sbatch scripts/slurm_multinode.sh
-```
-
-#### Option C: SSH-Based Launch
-
-```bash
-# Edit launch_multinode_ssh.sh to configure:
-# - NODES array with IP addresses
-# - MODEL_SCRIPT variable
-
-bash scripts/launch_multinode_ssh.sh
-
-# To stop training:
-bash scripts/stop_multinode_ssh.sh
 ```
 
 ## Environment Variables
@@ -219,22 +192,6 @@ NUM_NODES=2 NODE_RANK=1 MASTER_ADDR=node0 \
 bash scripts/debug_gpt_0.25b/pretrain.sh
 ```
 
-### Case 4: Large-Scale Training (8 nodes, 64 GPUs)
-
-Use SLURM or SSH launcher:
-
-**SLURM:**
-```bash
-# Edit slurm_multinode.sh: --nodes=8
-sbatch scripts/slurm_multinode.sh
-```
-
-**SSH:**
-```bash
-# Edit launch_multinode_ssh.sh: add 8 node IPs
-bash scripts/launch_multinode_ssh.sh
-```
-
 ## Monitoring Training
 
 ### View Logs
@@ -351,16 +308,6 @@ Training is deterministic with same `--seed`. If results differ:
 2. Verify same number of GPUs
 3. Ensure same PyTorch version
 
-### Problem: Cannot SSH to Nodes
-
-For `launch_multinode_ssh.sh`:
-```bash
-# Set up passwordless SSH
-ssh-keygen -t rsa
-ssh-copy-id user@node1
-ssh-copy-id user@node2
-```
-
 ## Performance Tips
 
 ### 1. Maximize Throughput
@@ -399,7 +346,6 @@ warmup_steps: 2000 → 8000
 ## Reference
 
 For more details, see:
-- [`MULTI_NODE_GUIDE.md`](./MULTI_NODE_GUIDE.md) - Comprehensive multi-node training guide
 - `../README.md` - Main project documentation
 - `../train.py` - Training script source code
 
