@@ -2,13 +2,39 @@
 # ================================
 # Torch Distributed Training Script
 # ================================
+# 
+# For multi-node training, set these environment variables:
+#   NUM_NODES: number of nodes (default: 1)
+#   NUM_GPUS: number of GPUs per node (default: 8)
+#   NODE_RANK: rank of this node, 0 for master (default: 0)
+#   MASTER_ADDR: IP address of the master node (default: localhost)
+#   MASTER_PORT: port for communication (default: 29500)
+#
+# Example for 2 nodes:
+#   Node 0 (master, IP: 192.168.1.100):
+#     NUM_NODES=2 NODE_RANK=0 MASTER_ADDR=192.168.1.100 bash scripts/debug_gpt_0.25b/pretrain.sh
+#   Node 1:
+#     NUM_NODES=2 NODE_RANK=1 MASTER_ADDR=192.168.1.100 bash scripts/debug_gpt_0.25b/pretrain.sh
+#
 
-NUM_NODES=1
-NUM_GPUS=8
-NODE_RANK=0
-MASTER_ADDR="localhost"
-MASTER_PORT=29500
-B=8
+# Multi-node configuration (can be overridden by environment variables)
+NUM_NODES=${NUM_NODES:-1}
+NUM_GPUS=${NUM_GPUS:-8}
+NODE_RANK=${NODE_RANK:-0}
+MASTER_ADDR=${MASTER_ADDR:-localhost}
+MASTER_PORT=${MASTER_PORT:-29500}
+B=${B:-8}
+
+echo "==================================="
+echo "Distributed Training Configuration"
+echo "==================================="
+echo "NUM_NODES:    $NUM_NODES"
+echo "NUM_GPUS:     $NUM_GPUS"
+echo "NODE_RANK:    $NODE_RANK"
+echo "MASTER_ADDR:  $MASTER_ADDR"
+echo "MASTER_PORT:  $MASTER_PORT"
+echo "BATCH_SIZE_PER_DEVICE:   $B"
+echo "==================================="
 
 DISTRIBUTED_ARGS="\
   --nnodes=$NUM_NODES \
