@@ -32,32 +32,44 @@ A minimal, hackable pre-training stack for GPT-style language models. This proje
 
 ```
 .
-├── model/                    # Model architecture
-│   ├── config.py            # GPTConfig dataclass
-│   ├── gpt.py               # GPT model implementation
-│   ├── modules/             # Modular components
-│   │   ├── attn.py         # Attention mechanisms
-│   │   ├── mlp.py          # MLP and MoE layers
-│   │   ├── norm.py         # Normalization layers
-│   │   └── emb.py          # Embedding layers
-│   └── ops/                 # Custom operations
-│       ├── flashattn.py    # Flash Attention integration
-│       └── grouped_gemm.py # Grouped GEMM for MoE
+├── model/                              # Model architecture
+│   ├── __init__.py
+│   ├── config.py                       # GPTConfig dataclass
+│   ├── gpt.py                          # GPT model implementation
+│   └── modules/                        # Modular components
+│       ├── attn.py                     # Attention mechanisms
+│       ├── mlp.py                      # Dense MLP and MoE layers
+│       ├── norm.py                     # Normalization layers
+│       ├── loss.py                     # SP-aware cross entropy loss
+│       └── emb.py                      # Embedding layers
 │
-├── distributed/             # Distributed training components
-│   └── zero1/              
-│       └── distributed_optimizer.py  # ZeRO-1 implementation
+├── distributed/                       # Distributed training components
+│   ├── __init__.py
+│   ├── parallel_state.py              # DP/SEP process group construction
+│   ├── zero1/
+│   │   └── distributed_optimizer.py   # ZeRO-1 implementation
+│   ├── sequence_parallel/
+│   │   └── ulysses.py                 # SP collectives and grad sync helpers
+│   └── expert_parallel/
+│       └── comm.py                    # EP all-to-all communication
 │
-├── utils/                   # Utility functions
-│   ├── model.py            # Model utilities (param counting, etc.)
-│   ├── training.py         # Training schedule helpers
-│   └── profile.py          # Profiling and MFU computation
+├── utils/                             # Utility functions
+│   ├── __init__.py
+│   ├── model.py                       # Model utilities (param counting, etc.)
+│   ├── training.py                    # Argument parsing and schedule helpers
+│   └── profile.py                     # Profiling and MFU computation
 │
-├── scripts/                 # Training scripts
-│   ├── debug_gpt_0.25b/    # 0.25B model config
-│   └── debug_gpt_0.3b_a0.17b/  # 0.3B model config
+├── scripts/                           # Launch scripts
+│   ├── README.md
+│   ├── debug_gpt_0.25b/
+│   │   └── pretrain.sh
+│   ├── debug_gpt_0.3b_a0.17b/
+│   │   └── pretrain.sh
+│   └── gpt_3b/
+│       └── pretrain.sh
 │
-└── train.py                 # Main training script
+├── train.py                           # Main training script
+└── README.md
 ```
 
 ## Requirements
