@@ -78,22 +78,17 @@ class Trainer:
         set_seed(config.seed + self.rank)
         self.master_process = self.rank == 0 # this process will do logging, checkpointing etc.
         
+        # initialize data / sequence parallel groups
         parallel_state.initialize_model_parallel(sep_size=8)
         self.dp_group = parallel_state.get_dp_group()
         self.dp_rank = parallel_state.get_dp_rank()
-        self.dp_local_rank = parallel_state.get_dp_local_rank()
         self.dp_world_size = parallel_state.get_dp_world_size()
-        self.dp_master_process = self.dp_rank == 0
         self.sp_group = parallel_state.get_sp_group()
         self.sp_rank = parallel_state.get_sp_rank()
-        self.sp_local_rank = parallel_state.get_sp_local_rank()
         self.sp_world_size = parallel_state.get_sp_world_size()
-        self.sp_master_process = self.sp_rank == 0
         self.dp_sp_group = parallel_state.get_dp_sp_group()
         self.dp_sp_rank = parallel_state.get_dp_sp_rank()
-        self.dp_sp_local_rank = parallel_state.get_dp_sp_local_rank()
         self.dp_sp_world_size = parallel_state.get_dp_sp_world_size()
-        self.dp_sp_master_process = self.dp_sp_rank == 0
 
     def _init_dataset(self, config: TrainerConfig):
         if config.use_mock_data:
