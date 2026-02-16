@@ -50,7 +50,7 @@ class GPT(nn.Module):
         with torch.random.fork_rng(devices=[self.wte.weight.device]):
             torch.manual_seed(base_seed)
             torch.nn.init.normal_(self.wte.weight, mean=0.0, std=self.config.init_std)
-        if not config.tied_lm_head:
+        if not self.config.tied_lm_head:
             with torch.random.fork_rng(devices=[self.lm_head.weight.device]):
                 torch.manual_seed(base_seed)
                 torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=self.config.init_std)

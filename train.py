@@ -126,6 +126,7 @@ class Trainer:
     def _init_model(self, config: TrainerConfig, model_config: GPTConfig = None):
         torch.set_float32_matmul_precision('high')
         self.model_config = GPTConfig() if model_config is None else model_config
+        self.model_config.seed = config.seed
         model = GPT(self.model_config)
         params_config = get_model_params(self.model_config)
         if self.master_process:
@@ -217,6 +218,7 @@ class Trainer:
     def _one_training_micro_step(self, config: TrainerConfig, micro_step: int, data_batch: dict):
         x, y = data_batch["input_ids"], data_batch["labels"]
         B, T = x.shape
+        assert T % self.sp_world_size == 0, "sequence length must be divisible by sp_world_size"
         seq_chunk_size = T // self.sp_world_size
         seq_start_idx = self.sp_local_rank * seq_chunk_size
         seq_end_idx = (self.sp_local_rank + 1) * seq_chunk_size
@@ -249,6 +251,7 @@ class Trainer:
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = lr
         self.optimizer.step()
+        dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG, group=self.dp_group)
         self.one_step_results["lr"] = lr
         self.one_step_results["loss"] = loss_accum
         self.one_step_results["grad_norm"] = norm
@@ -343,16 +346,24 @@ class Trainer:
         self.model.eval()
         with torch.no_grad():
             val_loss_accum = 0.0
-            val_loss_steps = self.config.B * len(self.val_loader) // (self.config.B * self.dp_world_size)
+            val_loss_steps = len(self.val_loader)
             for batch in tqdm(self.val_loader, desc="Val", disable=not self.master_process):
                 x, y = batch["input_ids"], batch["labels"]
-                x, y = x.to(f'cuda:{self.dp_local_rank}'), y.to(f'cuda:{self.dp_local_rank}')
+                B, T = x.shape
+                assert T % self.sp_world_size == 0, "sequence length must be divisible by sp_world_size"
+                seq_chunk_size = T // self.sp_world_size
+                seq_start_idx = self.sp_local_rank * seq_chunk_size
+                seq_end_idx = (self.sp_local_rank + 1) * seq_chunk_size
+                x = x[:, seq_start_idx:seq_end_idx]
+                y = y[:, seq_start_idx:seq_end_idx]
+                x = x.to(f'cuda:{self.dp_sp_local_rank}')
+                y = y.to(f'cuda:{self.dp_sp_local_rank}')
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                     logits, loss = self.model(x.reshape(x.shape[0],-1), y.reshape(y.shape[0],-1))
                 loss = loss / val_loss_steps
-                val_loss_accum += loss.detach()
-        dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
+                val_loss_accum += loss.logging_loss
         torch.cuda.synchronize()
+        dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG, group=self.dp_group)
         self.one_step_results["val_loss"] = val_loss_accum
     
     def save(self, step: int = None):

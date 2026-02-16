@@ -94,6 +94,7 @@ class Attention(nn.Module):
         super().__init__()
         assert config.hidden_size % config.num_attention_heads == 0
         self.device = torch.cuda.current_device()
+        self.config = config
         self.num_attention_heads = config.num_attention_heads
         self.num_key_value_heads = config.num_key_value_heads
         self.head_dim = config.hidden_size // config.num_attention_heads
@@ -107,7 +108,7 @@ class Attention(nn.Module):
         # output projection
         self.c_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False, device=self.device)
         self._init_weights(config.seed)
-    
+
     def _init_weights(self, base_seed: int):
         with torch.random.fork_rng(devices=[self.q_proj.weight.device]):
             torch.manual_seed(base_seed)

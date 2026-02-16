@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.distributed as dist
 
 from ..config import GPTConfig
 from ...distributed import (
@@ -13,6 +14,7 @@ class MLP(nn.Module):
     def __init__(self, config: GPTConfig, use_moe: bool = False):
         super().__init__()
         self.device = torch.cuda.current_device()
+        self.config = config
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.moe_intermediate_size if use_moe else config.intermediate_size
         self.use_moe = use_moe
@@ -111,25 +113,29 @@ class MoE(nn.Module):
         local_expert_indices = local_expert_indices[local_sort_idx]
         counts = torch.bincount(local_expert_indices, minlength=self.num_local_experts)
         offs = torch.cumsum(counts, dim=0).to(torch.int32)
-        if getattr(self, "grouped_gemm_supported", False):
+        if self.grouped_gemm_supported:
             gate_out = F.grouped_mm(local_x, self.gate_weights, offs=offs)
             up_out = F.grouped_mm(local_x, self.up_weights, offs=offs)
             act_out = self.act_fn(gate_out) * up_out
             down_out = F.grouped_mm(act_out, self.down_weights, offs=offs)
         else:
-            starts = torch.zeros_like(offs)
-            starts[1:] = offs[:-1]
-            relative_idx = torch.arange(len(local_x), device=local_x.device) - starts[local_expert_indices]
-            padded_x = torch.zeros(
-                self.num_local_experts, max_tokens, self.hidden_size, 
-                dtype=local_x.dtype, device=local_x.device
-            )
-            padded_x[local_expert_indices, relative_idx] = local_x
-            gate_out_padded = torch.bmm(padded_x, self.gate_weights.transpose(1, 2))
-            up_out_padded = torch.bmm(padded_x, self.up_weights.transpose(1, 2))
-            act_out_padded = self.act_fn(gate_out_padded) * up_out_padded
-            down_out_padded = torch.bmm(act_out_padded, self.down_weights.transpose(1, 2))
-            down_out = down_out_padded[local_expert_indices, relative_idx]
+            max_tokens = counts.max().item()
+            if max_tokens == 0:
+                down_out = torch.empty_like(local_x)
+            else:
+                starts = torch.zeros_like(offs)
+                starts[1:] = offs[:-1]
+                relative_idx = torch.arange(len(local_x), device=local_x.device) - starts[local_expert_indices]
+                padded_x = torch.zeros(
+                    self.num_local_experts, max_tokens, self.hidden_size, 
+                    dtype=local_x.dtype, device=local_x.device
+                )
+                padded_x[local_expert_indices, relative_idx] = local_x
+                gate_out_padded = torch.bmm(padded_x, self.gate_weights.transpose(1, 2))
+                up_out_padded = torch.bmm(padded_x, self.up_weights.transpose(1, 2))
+                act_out_padded = self.act_fn(gate_out_padded) * up_out_padded
+                down_out_padded = torch.bmm(act_out_padded, self.down_weights.transpose(1, 2))
+                down_out = down_out_padded[local_expert_indices, relative_idx]
 
         rev_local_sort_idx = torch.argsort(local_sort_idx)
         out_x = down_out[rev_local_sort_idx].contiguous()
