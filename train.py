@@ -33,6 +33,7 @@ from utils import (
 
 @dataclass
 class TrainerConfig:
+    # Training hyperparameters
     exp_name: str = "gpt"
     seed: int = 1337
     log_dir: str = "./log/"
@@ -59,6 +60,8 @@ class TrainerConfig:
     use_compile: bool = False
     use_profiler: bool = False
     steps_to_profile: list[int] = field(default_factory=lambda: [15, 20])
+    # Parallelism hyperparameters
+    sep_size: int = 8
 
     def __post_init__(self):
         # ensure split_rate depends on do_val if not set
@@ -79,7 +82,7 @@ class Trainer:
         self.master_process = self.rank == 0 # this process will do logging, checkpointing etc.
         
         # initialize data / sequence parallel groups
-        parallel_state.initialize_model_parallel(sep_size=8)
+        parallel_state.initialize_model_parallel(sep_size=config.sep_size)
         self.dp_group = parallel_state.get_dp_group()
         self.dp_rank = parallel_state.get_dp_rank()
         self.dp_world_size = parallel_state.get_dp_world_size()
