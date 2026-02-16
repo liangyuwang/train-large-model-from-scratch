@@ -24,6 +24,7 @@ NODE_RANK=${NODE_RANK:-0}
 MASTER_ADDR=${MASTER_ADDR:-localhost}
 MASTER_PORT=${MASTER_PORT:-29500}
 B=${B:-1}
+SEP_SIZE=${SEP_SIZE:-1}
 
 echo "==================================="
 echo "Distributed Training Configuration"
@@ -67,6 +68,10 @@ TRAINING_ARGS="\
   --use_compile \
 "
 
+PARALLELISM_ARGS="\
+  --sep_size $SEP_SIZE \
+"
+
 MODEL_ARGS="\
   --block_size 4096 \
   --vocab_size 50304 \
@@ -79,4 +84,4 @@ MODEL_ARGS="\
   --dropout 0.0 \
 "
 
-torchrun $DISTRIBUTED_ARGS train.py $TRAINING_ARGS $MODEL_ARGS
+torchrun $DISTRIBUTED_ARGS train.py $TRAINING_ARGS $PARALLELISM_ARGS $MODEL_ARGS

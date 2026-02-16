@@ -38,6 +38,8 @@ def get_training_args():
     parser.add_argument("--use_compile", action="store_true", help="Use torch.compile for optimization")
     parser.add_argument("--use_profiler", action="store_true", help="Enable profiler")
     parser.add_argument("--steps_to_profile", type=int, nargs='+', default=[15, 20], help="Steps to profile")
+    # Parallelism hyperparameters
+    parser.add_argument("--sep_size", type=int, default=8, help="SEP size (sequence-expert joint parallelism)")
     # Model hyperparameters
     parser.add_argument("--block_size", type=int, default=4096, help="Context length")
     parser.add_argument("--vocab_size", type=int, default=50304, help="Vocabulary size")
