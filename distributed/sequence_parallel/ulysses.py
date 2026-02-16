@@ -19,6 +19,23 @@ class UlyssesAllToAll(torch.autograd.Function):
 def ulysses_all_to_all(input_tensor, sp_group):
     return UlyssesAllToAll.apply(input_tensor, sp_group)
 
+
+def allreduce_non_expert_grads_across_sp(
+    model,
+    sp_group,
+    sp_world_size: int,
+    expert_local_param_suffixes: tuple[str, ...],
+):
+    if sp_world_size <= 1:
+        return
+    for name, param in model.named_parameters():
+        grad = param.grad
+        if grad is None:
+            continue
+        if name.endswith(expert_local_param_suffixes):
+            continue
+        dist.all_reduce(grad, op=dist.ReduceOp.SUM, group=sp_group)
+
 # Example usage
 if __name__ == "__main__":
     # Create a dummy tensor

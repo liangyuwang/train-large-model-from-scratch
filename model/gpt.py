@@ -10,11 +10,18 @@ from .modules.norm import LayerNorm
 from .modules.loss import CrossEntropyLoss
 from ...distributed import parallel_state
 
+EXPERT_LOCAL_PARAM_SUFFIXES = (
+    "mlp.experts_gate_weights",
+    "mlp.experts_up_weights",
+    "mlp.experts_down_weights",
+)
+
 class Block(nn.Module):
 
     def __init__(self, config: GPTConfig, use_moe: bool = True, top_k: int = None):
         super().__init__()
         self.use_moe = use_moe
+        self.device = torch.cuda.current_device()
         self.ln_1 = LayerNorm(config)
         self.attn = Attention(config)
         self.ln_2 = LayerNorm(config)
@@ -32,21 +39,27 @@ class GPT(nn.Module):
 
     def __init__(self, config: GPTConfig):
         super().__init__()
+        self.device = torch.cuda.current_device()
         self.config = config
         self.pos = None
         self.use_moe = config.use_moe
-        self.wte = nn.Embedding(config.vocab_size, config.hidden_size)
+        self.wte = nn.Embedding(config.vocab_size, config.hidden_size, device=self.device)
         self.blocks = nn.ModuleList([Block(config, self.use_moe) for layer in range(config.num_layer)])
         self.lnf = LayerNorm(config)
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False, device=self.device)
         if config.tied_lm_head:
             self.lm_head.weight = self.wte.weight
-        self.apply(self._init_weights)
         self.loss_fn = CrossEntropyLoss()
+        self._init_weights(config.seed)
 
-    def _init_weights(self, module):
-        if isinstance(module, nn.Linear) or isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=self.config.init_std)
+    def _init_weights(self, base_seed: int):
+        with torch.random.fork_rng(devices=[self.wte.weight.device]):
+            torch.manual_seed(base_seed)
+            torch.nn.init.normal_(self.wte.weight, mean=0.0, std=self.config.init_std)
+        if not self.config.tied_lm_head:
+            with torch.random.fork_rng(devices=[self.lm_head.weight.device]):
+                torch.manual_seed(base_seed)
+                torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=self.config.init_std)
 
     def forward(self, idx: torch.Tensor, targets: torch.Tensor):
         B, T = idx.size()

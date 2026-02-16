@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 @dataclass
 class GPTConfig:
+    seed: int = 1337
     block_size: int = 4096
     vocab_size: int = 50304
     num_layer: int = 32

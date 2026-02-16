@@ -17,9 +17,11 @@ from torch.distributed.checkpoint.filesystem import FileSystemWriter, FileSystem
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from model import GPTConfig, GPT
+from model.gpt import EXPERT_LOCAL_PARAM_SUFFIXES
 from distributed import (
     DistributedOptimizer,
     parallel_state,
+    allreduce_non_expert_grads_across_sp,
 )
 from utils import (
     get_training_args, 
@@ -65,6 +67,7 @@ class TrainerConfig:
 
 
 class Trainer:
+
     def _init_setup(self, config: TrainerConfig):
         self.rank = int(os.environ['RANK'])
         self.local_rank = int(os.environ['LOCAL_RANK'])
@@ -126,13 +129,13 @@ class Trainer:
     def _init_model(self, config: TrainerConfig, model_config: GPTConfig = None):
         torch.set_float32_matmul_precision('high')
         self.model_config = GPTConfig() if model_config is None else model_config
+        self.model_config.seed = config.seed
         model = GPT(self.model_config)
         params_config = get_model_params(self.model_config)
         if self.master_process:
             print(f"Params config: {params_config}")
         if config.use_compile and hasattr(torch, 'compile'):
             model = torch.compile(model)
-        model = model.to(f'cuda:{self.dp_local_rank}')
         #TODO: Here ZeRO-1 actually only need 'reduce' not 'all-reduce' used in DDP, we can develop a custom wrapper for ZeRO-1
         self.model = DDP(model, process_group=self.dp_group, find_unused_parameters=True, gradient_as_bucket_view=True)
         self.raw_model = self.model.module
@@ -144,7 +147,7 @@ class Trainer:
             process_group=self.dp_group,
         )
         self.raw_optimizer = self.optimizer.optimizer
-    
+
     def _init_profiler(self, config: TrainerConfig):
         @contextmanager
         def dummy_record_function(name: str):
@@ -218,13 +221,14 @@ class Trainer:
     def _one_training_micro_step(self, config: TrainerConfig, micro_step: int, data_batch: dict):
         x, y = data_batch["input_ids"], data_batch["labels"]
         B, T = x.shape
+        assert T % self.sp_world_size == 0, "sequence length must be divisible by sp_world_size"
         seq_chunk_size = T // self.sp_world_size
         seq_start_idx = self.sp_local_rank * seq_chunk_size
         seq_end_idx = (self.sp_local_rank + 1) * seq_chunk_size
         x = x[:, seq_start_idx:seq_end_idx]
         y = y[:, seq_start_idx:seq_end_idx]
-        x = x.to(f'cuda:{self.dp_sp_local_rank}')
-        y = y.to(f'cuda:{self.dp_sp_local_rank}')
+        x = x.to(f'cuda:{self.local_rank}')
+        y = y.to(f'cuda:{self.local_rank}')
         with self.profiler_record_fn("forward"):
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 _, loss = self.model(x.reshape(x.shape[0],-1), y.reshape(y.shape[0],-1))
@@ -245,11 +249,19 @@ class Trainer:
                 _, batch = next(self.train_loader_iter)
             self.model.require_backward_grad_sync = (micro_step == self.training_info["grad_accum_steps"] - 1)
             loss_accum += self._one_training_micro_step(config, micro_step, batch)
+        # TODO: Refactor optimizer/grad communication by parameter group (dense/router vs expert-local).
+        allreduce_non_expert_grads_across_sp(
+            model=self.raw_model,
+            sp_group=self.sp_group,
+            sp_world_size=self.sp_world_size,
+            expert_local_param_suffixes=EXPERT_LOCAL_PARAM_SUFFIXES,
+        )
         norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), config.grad_clip_value)
         lr = self._lr_scheduler(step, self.training_info["max_steps"], config.warmup_steps, config.max_lr, config.min_lr)
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = lr
         self.optimizer.step()
+        dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG, group=self.dp_group)
         self.one_step_results["lr"] = lr
         self.one_step_results["loss"] = loss_accum
         self.one_step_results["grad_norm"] = norm
@@ -290,7 +302,7 @@ class Trainer:
         if os.path.exists(rng_path):
             rng = torch.load(rng_path, map_location='cpu')
             torch.set_rng_state(rng['torch'].to(torch.uint8).cpu())
-            torch.cuda.set_rng_state(rng['cuda'].to(torch.uint8).cpu(), self.dp_local_rank)
+            torch.cuda.set_rng_state(rng['cuda'].to(torch.uint8).cpu(), self.local_rank)
             np.random.set_state(rng['numpy'])
         dist.barrier()
         torch.cuda.synchronize()
@@ -344,16 +356,24 @@ class Trainer:
         self.model.eval()
         with torch.no_grad():
             val_loss_accum = 0.0
-            val_loss_steps = self.config.B * len(self.val_loader) // (self.config.B * self.dp_world_size)
+            val_loss_steps = len(self.val_loader)
             for batch in tqdm(self.val_loader, desc="Val", disable=not self.master_process):
                 x, y = batch["input_ids"], batch["labels"]
-                x, y = x.to(f'cuda:{self.dp_local_rank}'), y.to(f'cuda:{self.dp_local_rank}')
+                B, T = x.shape
+                assert T % self.sp_world_size == 0, "sequence length must be divisible by sp_world_size"
+                seq_chunk_size = T // self.sp_world_size
+                seq_start_idx = self.sp_local_rank * seq_chunk_size
+                seq_end_idx = (self.sp_local_rank + 1) * seq_chunk_size
+                x = x[:, seq_start_idx:seq_end_idx]
+                y = y[:, seq_start_idx:seq_end_idx]
+                x = x.to(f'cuda:{self.local_rank}')
+                y = y.to(f'cuda:{self.local_rank}')
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                     logits, loss = self.model(x.reshape(x.shape[0],-1), y.reshape(y.shape[0],-1))
-                loss = loss / val_loss_steps
-                val_loss_accum += loss.detach()
-        dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
+                loss = loss.logging_loss / val_loss_steps
+                val_loss_accum += loss
         torch.cuda.synchronize()
+        dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG, group=self.dp_group)
         self.one_step_results["val_loss"] = val_loss_accum
     
     def save(self, step: int = None):
@@ -369,7 +389,7 @@ class Trainer:
         )
         rng_state = {
             'torch': torch.get_rng_state(),
-            'cuda': torch.cuda.get_rng_state(self.dp_local_rank),
+            'cuda': torch.cuda.get_rng_state(self.local_rank),
             'numpy': np.random.get_state(),
         }
         torch.save(rng_state, f"{checkpoint_path}_rng_rank{self.rank}.pt")
