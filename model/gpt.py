@@ -69,8 +69,8 @@ class GPT(nn.Module):
             x = block(x)
         x = self.lnf(x)
         logits = self.lm_head(x) # (B, T, vocab_size)
-        loss = self.loss_fn(logits, targets)
-        return logits, loss
+        loss, logging_loss = self.loss_fn(logits, targets)
+        return logits, loss, logging_loss
     
     def get_flops_per_fwd_bwd(self, batch_size, seq_len):
         """

@@ -229,11 +229,11 @@ class Trainer:
         y = y.to(f'cuda:{self.local_rank}')
         with self.profiler_record_fn("forward"):
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                _, loss = self.model(x.reshape(x.shape[0],-1), y.reshape(y.shape[0],-1))
+                _, loss, logging_loss = self.model(x.reshape(x.shape[0],-1), y.reshape(y.shape[0],-1))
         loss = loss / self.training_info["grad_accum_steps"]
         with self.profiler_record_fn("backward"):
             loss.backward()
-        return loss.logging_loss
+        return logging_loss / self.training_info["grad_accum_steps"]
 
     def _one_training_step(self, config: TrainerConfig, step: int):
         self.model.train()
@@ -367,8 +367,8 @@ class Trainer:
                 x = x.to(f'cuda:{self.local_rank}')
                 y = y.to(f'cuda:{self.local_rank}')
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                    logits, loss = self.model(x.reshape(x.shape[0],-1), y.reshape(y.shape[0],-1))
-                loss = loss.logging_loss / val_loss_steps
+                    logits, _, logging_loss = self.model(x.reshape(x.shape[0],-1), y.reshape(y.shape[0],-1))
+                loss = logging_loss / val_loss_steps
                 val_loss_accum += loss
         torch.cuda.synchronize()
         dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG, group=self.dp_group)

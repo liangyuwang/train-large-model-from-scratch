@@ -38,7 +38,6 @@ class CrossEntropyLoss(nn.Module):
         with torch.no_grad():
             global_loss_sum = local_loss_sum.clone().detach()
             dist.all_reduce(global_loss_sum, op=dist.ReduceOp.SUM, group=sp_group)
-            global_loss = global_loss_sum / global_valid_count
-            loss.logging_loss = global_loss # for logging
+            logging_loss = global_loss_sum / global_valid_count # for logging
 
-        return loss
+        return loss, logging_loss
