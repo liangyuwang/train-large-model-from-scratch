@@ -231,8 +231,8 @@ class Trainer:
         seq_end_idx = (self.sp_local_rank + 1) * seq_chunk_size
         x = x[:, seq_start_idx:seq_end_idx]
         y = y[:, seq_start_idx:seq_end_idx]
-        x = x.to(f'cuda:{self.dp_sp_local_rank}')
-        y = y.to(f'cuda:{self.dp_sp_local_rank}')
+        x = x.to(f'cuda:{self.local_rank}')
+        y = y.to(f'cuda:{self.local_rank}')
         with self.profiler_record_fn("forward"):
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 _, loss = self.model(x.reshape(x.shape[0],-1), y.reshape(y.shape[0],-1))
@@ -370,8 +370,8 @@ class Trainer:
                 seq_end_idx = (self.sp_local_rank + 1) * seq_chunk_size
                 x = x[:, seq_start_idx:seq_end_idx]
                 y = y[:, seq_start_idx:seq_end_idx]
-                x = x.to(f'cuda:{self.dp_sp_local_rank}')
-                y = y.to(f'cuda:{self.dp_sp_local_rank}')
+                x = x.to(f'cuda:{self.local_rank}')
+                y = y.to(f'cuda:{self.local_rank}')
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                     logits, loss = self.model(x.reshape(x.shape[0],-1), y.reshape(y.shape[0],-1))
                 loss = loss.logging_loss / val_loss_steps
