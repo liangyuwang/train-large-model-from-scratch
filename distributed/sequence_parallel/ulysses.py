@@ -5,6 +5,7 @@ class UlyssesAllToAll(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input_tensor, sp_group):
         ctx.sp_group = sp_group
+        input_tensor = input_tensor.contiguous()
         output_tensor = torch.empty_like(input_tensor)
         dist.all_to_all_single(output_tensor, input_tensor, group=sp_group)
         return output_tensor
@@ -12,6 +13,7 @@ class UlyssesAllToAll(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         sp_group = ctx.sp_group
+        grad_output = grad_output.contiguous()
         grad_input = torch.empty_like(grad_output)
         dist.all_to_all_single(grad_input, grad_output, group=sp_group)
         return grad_input, None
