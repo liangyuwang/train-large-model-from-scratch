@@ -1,3 +1,6 @@
+from packaging import version
+import torch
+
 from model.config import GPTConfig
 
 def get_model_params(model_config: GPTConfig):
@@ -174,3 +177,12 @@ def get_compiled_to_uncompiled_mapping(raw_model, compiled_keys):
             print(f"  - {key}")
 
     return mapping
+
+
+def torch_version_ge(version: str = "2.10"):
+    v = torch.__version__.split("+")[0]
+    return version.parse(v) > version.parse(version)
+
+def sm_ge(device=None, sm: int = 80):
+    major, minor = torch.cuda.get_device_capability(device)
+    return major >= sm/10   # SM80+  => major=8 (A100), 9 (H100), etc.
