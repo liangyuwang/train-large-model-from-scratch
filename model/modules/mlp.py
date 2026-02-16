@@ -56,25 +56,25 @@ class MoE(nn.Module):
         assert self.num_experts % self.ep_size == 0
         self.num_local_experts = self.num_experts // self.ep_size
 
-        self.gate_weights = nn.Parameter(torch.empty(self.num_local_experts, self.intermediate_size, self.hidden_size, device=self.device))
-        self.up_weights = nn.Parameter(torch.empty(self.num_local_experts, self.intermediate_size, self.hidden_size, device=self.device))
-        self.down_weights = nn.Parameter(torch.empty(self.num_local_experts, self.hidden_size, self.intermediate_size, device=self.device))
-        self.act_fn = nn.SiLU()
+        self.experts_gate_weights = nn.Parameter(torch.empty(self.num_local_experts, self.intermediate_size, self.hidden_size, device=self.device))
+        self.experts_up_weights = nn.Parameter(torch.empty(self.num_local_experts, self.intermediate_size, self.hidden_size, device=self.device))
+        self.experts_down_weights = nn.Parameter(torch.empty(self.num_local_experts, self.hidden_size, self.intermediate_size, device=self.device))
+        self.experts_act_fn = nn.SiLU()
         self._init_expert_weights(config.seed)
     
     def _init_expert_weights(self, base_seed: int):
         ep_rank = parallel_state.get_ep_rank()
         
-        with torch.random.fork_rng(devices=[self.gate_weights.device]):
+        with torch.random.fork_rng(devices=[self.experts_gate_weights.device]):
             for local_idx in range(self.num_local_experts):
                 global_expert_idx = ep_rank * self.num_local_experts + local_idx
                 
                 expert_seed = base_seed + global_expert_idx
                 torch.manual_seed(expert_seed)
                 
-                nn.init.normal_(self.gate_weights[local_idx], mean=0.0, std=0.02)
-                nn.init.normal_(self.up_weights[local_idx], mean=0.0, std=0.02)
-                nn.init.normal_(self.down_weights[local_idx], mean=0.0, std=0.02)
+                nn.init.normal_(self.experts_gate_weights[local_idx], mean=0.0, std=0.02)
+                nn.init.normal_(self.experts_up_weights[local_idx], mean=0.0, std=0.02)
+                nn.init.normal_(self.experts_down_weights[local_idx], mean=0.0, std=0.02)
 
         with torch.random.fork_rng(devices=[self.router.weight.device]):
             torch.manual_seed(base_seed)
@@ -114,10 +114,10 @@ class MoE(nn.Module):
         counts = torch.bincount(local_expert_indices, minlength=self.num_local_experts)
         offs = torch.cumsum(counts, dim=0).to(torch.int32)
         if self.grouped_gemm_supported:
-            gate_out = F.grouped_mm(local_x, self.gate_weights, offs=offs)
-            up_out = F.grouped_mm(local_x, self.up_weights, offs=offs)
-            act_out = self.act_fn(gate_out) * up_out
-            down_out = F.grouped_mm(act_out, self.down_weights, offs=offs)
+            gate_out = F.grouped_mm(local_x, self.experts_gate_weights, offs=offs)
+            up_out = F.grouped_mm(local_x, self.experts_up_weights, offs=offs)
+            act_out = self.experts_act_fn(gate_out) * up_out
+            down_out = F.grouped_mm(act_out, self.experts_down_weights, offs=offs)
         else:
             max_tokens = counts.max().item()
             if max_tokens == 0:
@@ -131,10 +131,10 @@ class MoE(nn.Module):
                     dtype=local_x.dtype, device=local_x.device
                 )
                 padded_x[local_expert_indices, relative_idx] = local_x
-                gate_out_padded = torch.bmm(padded_x, self.gate_weights.transpose(1, 2))
-                up_out_padded = torch.bmm(padded_x, self.up_weights.transpose(1, 2))
-                act_out_padded = self.act_fn(gate_out_padded) * up_out_padded
-                down_out_padded = torch.bmm(act_out_padded, self.down_weights.transpose(1, 2))
+                gate_out_padded = torch.bmm(padded_x, self.experts_gate_weights.transpose(1, 2))
+                up_out_padded = torch.bmm(padded_x, self.experts_up_weights.transpose(1, 2))
+                act_out_padded = self.experts_act_fn(gate_out_padded) * up_out_padded
+                down_out_padded = torch.bmm(act_out_padded, self.experts_down_weights.transpose(1, 2))
                 down_out = down_out_padded[local_expert_indices, relative_idx]
 
         rev_local_sort_idx = torch.argsort(local_sort_idx)

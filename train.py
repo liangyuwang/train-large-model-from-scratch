@@ -20,6 +20,7 @@ from model import GPTConfig, GPT
 from distributed import (
     DistributedOptimizer,
     parallel_state,
+    allreduce_non_expert_grads_across_sp,
 )
 from utils import (
     get_training_args, 
@@ -65,6 +66,12 @@ class TrainerConfig:
 
 
 class Trainer:
+    _EXPERT_LOCAL_PARAM_SUFFIXES = (
+        "mlp.experts_gate_weights",
+        "mlp.experts_up_weights",
+        "mlp.experts_down_weights",
+    )
+
     def _init_setup(self, config: TrainerConfig):
         self.rank = int(os.environ['RANK'])
         self.local_rank = int(os.environ['LOCAL_RANK'])
@@ -246,6 +253,13 @@ class Trainer:
                 _, batch = next(self.train_loader_iter)
             self.model.require_backward_grad_sync = (micro_step == self.training_info["grad_accum_steps"] - 1)
             loss_accum += self._one_training_micro_step(config, micro_step, batch)
+        # TODO: Refactor optimizer/grad communication by parameter group (dense/router vs expert-local).
+        allreduce_non_expert_grads_across_sp(
+            model=self.raw_model,
+            sp_group=self.sp_group,
+            sp_world_size=self.sp_world_size,
+            expert_local_param_suffixes=self._EXPERT_LOCAL_PARAM_SUFFIXES,
+        )
         norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), config.grad_clip_value)
         lr = self._lr_scheduler(step, self.training_info["max_steps"], config.warmup_steps, config.max_lr, config.min_lr)
         for param_group in self.optimizer.param_groups:
