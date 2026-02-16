@@ -148,4 +148,4 @@ class MoE(nn.Module):
         unpermuted_x = unpermuted_x * weights.unsqueeze(-1)
         final_x = unpermuted_x.view(B * T, self.top_k, D).sum(dim=1)
 
-        return final_x, gate_logits
+        return final_x.reshape(B, T, D), gate_logits
