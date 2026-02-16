@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..config import GPTConfig
-from ...distributed import (
+from distributed import (
     parallel_state,
     ulysses_all_to_all,
 )

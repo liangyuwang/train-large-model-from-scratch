@@ -8,7 +8,7 @@ from .modules.attn import Attention
 from .modules.mlp import MLP, MoE
 from .modules.norm import LayerNorm
 from .modules.loss import CrossEntropyLoss
-from ...distributed import parallel_state
+from distributed import parallel_state
 
 EXPERT_LOCAL_PARAM_SUFFIXES = (
     "mlp.experts_gate_weights",

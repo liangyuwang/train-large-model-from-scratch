@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.distributed as dist
 
 from ..config import GPTConfig
-from ...distributed import (
+from distributed import (
     parallel_state,
     ep_all_to_all,
 )

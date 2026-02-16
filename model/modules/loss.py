@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
 
-from ...distributed import parallel_state
+from distributed import parallel_state
 
 
 class CrossEntropyLoss(nn.Module):
