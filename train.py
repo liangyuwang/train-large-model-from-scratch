@@ -17,6 +17,7 @@ from torch.distributed.checkpoint.filesystem import FileSystemWriter, FileSystem
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from model import GPTConfig, GPT
+from model.gpt import EXPERT_LOCAL_PARAM_SUFFIXES
 from distributed import (
     DistributedOptimizer,
     parallel_state,
@@ -66,11 +67,6 @@ class TrainerConfig:
 
 
 class Trainer:
-    _EXPERT_LOCAL_PARAM_SUFFIXES = (
-        "mlp.experts_gate_weights",
-        "mlp.experts_up_weights",
-        "mlp.experts_down_weights",
-    )
 
     def _init_setup(self, config: TrainerConfig):
         self.rank = int(os.environ['RANK'])
@@ -258,7 +254,7 @@ class Trainer:
             model=self.raw_model,
             sp_group=self.sp_group,
             sp_world_size=self.sp_world_size,
-            expert_local_param_suffixes=self._EXPERT_LOCAL_PARAM_SUFFIXES,
+            expert_local_param_suffixes=EXPERT_LOCAL_PARAM_SUFFIXES,
         )
         norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), config.grad_clip_value)
         lr = self._lr_scheduler(step, self.training_info["max_steps"], config.warmup_steps, config.max_lr, config.min_lr)

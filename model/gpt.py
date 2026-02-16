@@ -10,6 +10,12 @@ from .modules.norm import LayerNorm
 from .modules.loss import CrossEntropyLoss
 from ...distributed import parallel_state
 
+EXPERT_LOCAL_PARAM_SUFFIXES = (
+    "mlp.experts_gate_weights",
+    "mlp.experts_up_weights",
+    "mlp.experts_down_weights",
+)
+
 class Block(nn.Module):
 
     def __init__(self, config: GPTConfig, use_moe: bool = True, top_k: int = None):
