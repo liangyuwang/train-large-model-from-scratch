@@ -64,6 +64,12 @@ All scripts support these environment variables:
 | `MASTER_ADDR` | Master node IP/hostname | `localhost` | `192.168.1.100` |
 | `MASTER_PORT` | Communication port | `29500` | `29500` |
 | `B` | Micro batch size per GPU | `8` | `16` |
+| `SEP_SIZE` | SEP group size (sequence-expert joint, `--sep_size`) | `1` | `2`, `4`, `8` |
+
+Notes:
+- Dense models (`--use_moe` disabled): SEP degenerates to pure SP.
+- `WORLD_SIZE` must be divisible by `SEP_SIZE`.
+- Sequence length `T` must be divisible by `SEP_SIZE`.
 
 ## Model Configurations
 
@@ -149,13 +155,13 @@ grad_accum_steps = total_batch_size / (B × T × NUM_NODES × NUM_GPUS)
 Keep same effective batch size:
 ```bash
 # 1 node, 8 GPUs
-B=8  total_batch_size=2097152
+B=8  SEP_SIZE=1  total_batch_size=2097152
 
 # 4 nodes, 32 GPUs - keep B=8, gradient accumulation reduces 4x
-B=8  total_batch_size=2097152
+B=8  SEP_SIZE=4  total_batch_size=2097152
 
 # Or increase batch size 4x
-B=8  total_batch_size=8388608
+B=8  SEP_SIZE=4  total_batch_size=8388608
 ```
 
 Or increase micro batch size:
@@ -176,19 +182,22 @@ NUM_GPUS=1 B=2 bash scripts/debug_gpt_0.25b/pretrain.sh
 
 ```bash
 bash scripts/debug_gpt_0.25b/pretrain.sh
+
+# enable SEP (sequence-expert joint) parallelism on 2-way split
+SEP_SIZE=2 bash scripts/debug_gpt_0.25b/pretrain.sh
 ```
 
 ### Case 3: Multi-Node Training (2 nodes, 16 GPUs)
 
 **Node 0:**
 ```bash
-NUM_NODES=2 NODE_RANK=0 MASTER_ADDR=node0 \
+NUM_NODES=2 NODE_RANK=0 MASTER_ADDR=node0 SEP_SIZE=4 \
 bash scripts/debug_gpt_0.25b/pretrain.sh
 ```
 
 **Node 1:**
 ```bash
-NUM_NODES=2 NODE_RANK=1 MASTER_ADDR=node0 \
+NUM_NODES=2 NODE_RANK=1 MASTER_ADDR=node0 SEP_SIZE=4 \
 bash scripts/debug_gpt_0.25b/pretrain.sh
 ```
 

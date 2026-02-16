@@ -13,6 +13,7 @@ A minimal, hackable pre-training stack for GPT-style language models. This proje
 - **Distributed Training**:
   - ZeRO-1 optimizer state partitioning for memory efficiency
   - DistributedDataParallel (DDP) for multi-GPU training
+  - Sequence-Expert joint parallelism via `SEP_SIZE` / `--sep_size` (SEP)
   - Gradient accumulation for large effective batch sizes
   
 - **Training Optimizations**:
@@ -79,6 +80,9 @@ bash scripts/debug_gpt_0.25b/pretrain.sh
 
 # Train 0.3B MoE model (8 GPUs)
 bash scripts/debug_gpt_0.3b_a0.17b/pretrain.sh
+
+# Override SEP (sequence-expert joint) parallel size
+SEP_SIZE=2 bash scripts/debug_gpt_0.25b/pretrain.sh
 ```
 
 **Direct command for quick testing:**
@@ -91,6 +95,7 @@ torchrun --nproc_per_node=8 train.py \
   --total_batch_size 524288 \
   --B 8 \
   --T 4096 \
+  --sep_size 1 \
   --max_epochs 1 \
   --debug
 ```
@@ -168,6 +173,27 @@ class TrainerConfig:
     max_epochs: int = 1                 # Training epochs
     save_every_steps: int = 5000        # Checkpoint frequency
     use_compile: bool = False           # PyTorch 2.0 compilation
+```
+
+### Parallelism Configuration
+
+`sep_size` controls SEP group size (sequence-expert joint parallelism).
+
+- CLI flag: `--sep_size` (default: `8` in `utils/training.py`)
+- Script env var: `SEP_SIZE` (mapped to `--sep_size`)
+- Dense models (`--use_moe` disabled): SEP degenerates to pure SP.
+- Constraints:
+  - `WORLD_SIZE % sep_size == 0`
+  - sequence length must be divisible by SEP size (`T % sep_size == 0`)
+
+Example:
+
+```bash
+torchrun --nproc_per_node=8 train.py \
+  --B 8 \
+  --T 4096 \
+  --sep_size 2 \
+  --max_epochs 1
 ```
 
 ## Training Features
