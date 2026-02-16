@@ -221,8 +221,8 @@ class Trainer:
         B, T = x.shape
         assert T % self.sp_world_size == 0, "sequence length must be divisible by sp_world_size"
         seq_chunk_size = T // self.sp_world_size
-        seq_start_idx = self.sp_local_rank * seq_chunk_size
-        seq_end_idx = (self.sp_local_rank + 1) * seq_chunk_size
+        seq_start_idx = self.sp_rank * seq_chunk_size
+        seq_end_idx = (self.sp_rank + 1) * seq_chunk_size
         x = x[:, seq_start_idx:seq_end_idx]
         y = y[:, seq_start_idx:seq_end_idx]
         x = x.to(f'cuda:{self.local_rank}')
@@ -360,8 +360,8 @@ class Trainer:
                 B, T = x.shape
                 assert T % self.sp_world_size == 0, "sequence length must be divisible by sp_world_size"
                 seq_chunk_size = T // self.sp_world_size
-                seq_start_idx = self.sp_local_rank * seq_chunk_size
-                seq_end_idx = (self.sp_local_rank + 1) * seq_chunk_size
+                seq_start_idx = self.sp_rank * seq_chunk_size
+                seq_end_idx = (self.sp_rank + 1) * seq_chunk_size
                 x = x[:, seq_start_idx:seq_end_idx]
                 y = y[:, seq_start_idx:seq_end_idx]
                 x = x.to(f'cuda:{self.local_rank}')
