@@ -8,6 +8,10 @@ from distributed import (
     parallel_state,
     ep_all_to_all,
 )
+from utils import (
+    torch_version_ge,
+    sm_ge,
+)
 
 class MLP(nn.Module):
     """Dense MLP or Single expert in MoE"""
@@ -50,7 +54,13 @@ class MoE(nn.Module):
         assert self.top_k <= self.num_experts, f"top_k must be less than or equal to num_experts, got {self.top_k} and {self.num_experts}"
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.moe_intermediate_size
-        self.grouped_gemm_supported = torch.version.hip and torch.version.hip >= '2.10'
+        self.grouped_gemm_supported = (
+            torch.cuda.is_available()
+            and torch.version.cuda is not None
+            and torch_version_ge()
+            and sm_ge(self.device)
+            and hasattr(F, "grouped_mm")
+        )
 
         self.router = nn.Linear(self.hidden_size, self.num_experts, bias=False, device=self.device)
 
