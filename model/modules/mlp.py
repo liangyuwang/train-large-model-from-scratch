@@ -44,8 +44,10 @@ class MoE(nn.Module):
     def __init__(self, config: GPTConfig, top_k: int = None):
         super().__init__()
         self.device = torch.cuda.current_device()
+        self.config = config
         self.num_experts = config.num_experts
         self.top_k = top_k if top_k is not None else config.num_experts_per_tok
+        assert self.top_k <= self.num_experts, f"top_k must be less than or equal to num_experts, got {self.top_k} and {self.num_experts}"
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.moe_intermediate_size
         self.grouped_gemm_supported = torch.version.hip and torch.version.hip >= '2.10'
@@ -72,13 +74,13 @@ class MoE(nn.Module):
                 expert_seed = base_seed + global_expert_idx
                 torch.manual_seed(expert_seed)
                 
-                nn.init.normal_(self.experts_gate_weights[local_idx], mean=0.0, std=0.02)
-                nn.init.normal_(self.experts_up_weights[local_idx], mean=0.0, std=0.02)
-                nn.init.normal_(self.experts_down_weights[local_idx], mean=0.0, std=0.02)
+                nn.init.normal_(self.experts_gate_weights[local_idx], mean=0.0, std=self.config.init_std)
+                nn.init.normal_(self.experts_up_weights[local_idx], mean=0.0, std=self.config.init_std)
+                nn.init.normal_(self.experts_down_weights[local_idx], mean=0.0, std=self.config.init_std)
 
         with torch.random.fork_rng(devices=[self.router.weight.device]):
             torch.manual_seed(base_seed)
-            nn.init.normal_(self.router.weight, mean=0.0, std=0.02)
+            nn.init.normal_(self.router.weight, mean=0.0, std=self.config.init_std)
     
     def forward(self, x: torch.Tensor):
         B, T, D = x.size()

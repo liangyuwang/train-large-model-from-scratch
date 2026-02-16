@@ -151,7 +151,7 @@ class Trainer:
             process_group=self.dp_group,
         )
         self.raw_optimizer = self.optimizer.optimizer
-    
+
     def _init_profiler(self, config: TrainerConfig):
         @contextmanager
         def dummy_record_function(name: str):
@@ -374,8 +374,8 @@ class Trainer:
                 y = y.to(f'cuda:{self.dp_sp_local_rank}')
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                     logits, loss = self.model(x.reshape(x.shape[0],-1), y.reshape(y.shape[0],-1))
-                loss = loss / val_loss_steps
-                val_loss_accum += loss.logging_loss
+                loss = loss.logging_loss / val_loss_steps
+                val_loss_accum += loss
         torch.cuda.synchronize()
         dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG, group=self.dp_group)
         self.one_step_results["val_loss"] = val_loss_accum
