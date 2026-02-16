@@ -179,9 +179,9 @@ def get_compiled_to_uncompiled_mapping(raw_model, compiled_keys):
     return mapping
 
 
-def torch_version_ge(version: str = "2.10"):
+def torch_version_ge(torch_version: str = "2.10"):
     v = torch.__version__.split("+")[0]
-    return version.parse(v) > version.parse(version)
+    return version.parse(v) > version.parse(torch_version)
 
 def sm_ge(device=None, sm: int = 80):
     major, minor = torch.cuda.get_device_capability(device)
