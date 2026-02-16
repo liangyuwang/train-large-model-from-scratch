@@ -56,6 +56,11 @@ def get_dp_world_size():
 def get_dp_rank():
     return dist.get_rank(group=get_dp_group())
 
+def get_dp_global_rank(rank: int = None):
+    if rank is None:
+        rank = get_dp_rank()
+    return dist.get_global_rank(group=get_dp_group(), rank=rank)
+
 def get_sep_group():
     assert _SEP_GROUP is not None, "SEP Group is not initialized"
     return _SEP_GROUP
@@ -66,6 +71,11 @@ def get_sep_world_size():
 def get_sep_rank():
     return dist.get_rank(group=get_sep_group())
 
+def get_sep_global_rank(rank: int = None):
+    if rank is None:
+        rank = get_sep_rank()
+    return dist.get_global_rank(group=get_sep_group(), rank=rank)
+
 def get_sp_group():
     return get_sep_group()
 
@@ -74,6 +84,11 @@ def get_sp_world_size():
 
 def get_sp_rank():
     return get_sep_rank()
+
+def get_sp_global_rank(rank: int = None):
+    if rank is None:
+        rank = get_sp_rank()
+    return dist.get_global_rank(group=get_sp_group(), rank=rank)
 
 def get_ep_group():
     return get_sep_group()
@@ -84,6 +99,11 @@ def get_ep_world_size():
 def get_ep_rank():
     return get_sep_rank()
 
+def get_ep_global_rank(rank: int = None):
+    if rank is None:
+        rank = get_ep_rank()
+    return dist.get_global_rank(group=get_ep_group(), rank=rank)
+
 def get_dp_sp_group():
     assert _DP_SP_GROUP is not None, "DP_SP Group is not initialized"
     return _DP_SP_GROUP
@@ -93,3 +113,8 @@ def get_dp_sp_world_size():
 
 def get_dp_sp_rank():
     return dist.get_rank(group=get_dp_sp_group())
+
+def get_dp_sp_global_rank(rank: int = None):
+    if rank is None:
+        rank = get_dp_sp_rank()
+    return dist.get_global_rank(group=get_dp_sp_group(), rank=rank)

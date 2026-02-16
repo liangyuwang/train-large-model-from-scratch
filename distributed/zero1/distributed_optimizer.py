@@ -21,6 +21,7 @@ class DistributedOptimizer:
         self.world_size = dist.get_world_size(process_group)
         if self.num_parts is None:
             self.num_parts = self.world_size
+        assert 1 <= self.num_parts <= self.world_size
         self.apply_zero1()
 
     def apply_zero1(self, part_assignment = None):
@@ -38,9 +39,16 @@ class DistributedOptimizer:
                     self.tensor_dict[key] = param
                     self._key_by_param_id[id(param)] = key
         if part_assignment == None:
+            if self.ranks_map is None:
+                owners = list(range(self.num_parts))
+            else:
+                owners = [dist.get_group_rank(self.process_group, r) for r in self.ranks_map]  # global -> group
+                self.num_parts = len(owners)
+            assert 1 <= self.num_parts <= self.world_size
+            assert len(set(owners)) == len(owners), f"Duplicate owners in ranks_map: {self.ranks_map}"
             part_assignment, _ = partition_tensors(
                 self.tensor_dict,
-                ranks_map=self.ranks_map,
+                ranks_map=owners,
                 num_parts=self.num_parts,
                 verbose=self.verbose,
             )
@@ -85,6 +93,15 @@ class DistributedOptimizer:
         if self.world_size > 1:
             self._broadcast_all_params_from_owners()
         return out
+    
+    @torch.no_grad()
+    def zero_grad(self, set_to_none: bool = True):
+        for p in self.tensor_dict.values():
+            if p.grad is not None:
+                if set_to_none:
+                    p.grad = None
+                else:
+                    p.grad.zero_()
 
     @torch.no_grad()
     def _broadcast_all_params_from_owners(self):
@@ -96,8 +113,9 @@ class DistributedOptimizer:
         if self.world_size == 1:
             return
         for key, p in self.tensor_dict.items():
-            src = self.part_assignment[key]
+            group_src = self.part_assignment[key]
             # All ranks call broadcast for this tensor, using the same src
+            src = dist.get_global_rank(self.process_group, group_src)
             dist.broadcast(p.data, src=src, group=self.process_group)
 
 
@@ -122,7 +140,7 @@ def partition_tensors(
         part_assignment (dict): mapping from (group_idx, param_idx) -> partition id.
         tensor_dict (OrderedDict): original tensor dict, returned for convenience.
     """
-    if ranks_map:
+    if ranks_map is not None:
         num_parts = len(ranks_map)
     else:
         assert num_parts and num_parts > 0, "num_parts must be positive integer"
@@ -147,7 +165,8 @@ def partition_tensors(
     for key, size in tensors:
         cur_size, part_id = heapq.heappop(heap)
 
-        part_assignment[key] = part_id
+        owner = ranks_map[part_id] if ranks_map is not None else part_id
+        part_assignment[key] = owner
         new_size = cur_size + size
         parts_sizes[part_id] = new_size
 
