@@ -35,7 +35,6 @@ def allreduce_non_expert_grads_across_sp(
         if name.endswith(expert_local_param_suffixes):
             continue
         dist.all_reduce(grad, op=dist.ReduceOp.SUM, group=sp_group)
-        grad.mul_(1.0 / sp_world_size)
 
 # Example usage
 if __name__ == "__main__":

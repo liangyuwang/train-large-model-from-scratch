@@ -306,7 +306,7 @@ class Trainer:
         if os.path.exists(rng_path):
             rng = torch.load(rng_path, map_location='cpu')
             torch.set_rng_state(rng['torch'].to(torch.uint8).cpu())
-            torch.cuda.set_rng_state(rng['cuda'].to(torch.uint8).cpu(), self.dp_local_rank)
+            torch.cuda.set_rng_state(rng['cuda'].to(torch.uint8).cpu(), self.local_rank)
             np.random.set_state(rng['numpy'])
         dist.barrier()
         torch.cuda.synchronize()
@@ -393,7 +393,7 @@ class Trainer:
         )
         rng_state = {
             'torch': torch.get_rng_state(),
-            'cuda': torch.cuda.get_rng_state(self.dp_local_rank),
+            'cuda': torch.cuda.get_rng_state(self.local_rank),
             'numpy': np.random.get_state(),
         }
         torch.save(rng_state, f"{checkpoint_path}_rng_rank{self.rank}.pt")
