@@ -1,4 +1,3 @@
-from .config import GPTConfig
 from .gpt import GPT, Block
 
 from .modules.emb import TextEmbedding, ImgEmbedding
