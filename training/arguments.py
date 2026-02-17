@@ -104,7 +104,7 @@ def _add_parallel_args(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
     g.add_argument("--sep_size", type=int, default=8, help="SEP size (SP/EP joint parallel group size)")
     g.add_argument("--ddp_find_unused_parameters", action="store_true")
     g.add_argument("--ddp_gradient_as_bucket_view", action="store_true")
-    g.add_argument("--zero1", action="store_true", help="enable ZeRO-1 style optimizer sharding (repo DistributedOptimizer)")
+    g.add_argument("--use_distributed_optimizer", action="store_true", help="enable ZeRO-1 style optimizer sharding (DistributedOptimizer)")
     return parser
 
 

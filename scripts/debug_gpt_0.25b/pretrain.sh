@@ -72,6 +72,7 @@ TRAINING_ARGS="\
 
 PARALLELISM_ARGS="\
   --sep_size $SEP_SIZE \
+  --use_distributed_optimizer \
 "
 
 MODEL_ARGS="\

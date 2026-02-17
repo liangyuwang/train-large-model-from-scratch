@@ -178,7 +178,7 @@ def build_config(args: argparse.Namespace) -> Config:
         sep_size=args.sep_size,
         ddp_find_unused_parameters=args.ddp_find_unused_parameters,
         ddp_gradient_as_bucket_view=args.ddp_gradient_as_bucket_view,
-        zero1=args.zero1,
+        use_distributed_optimizer=args.use_distributed_optimizer,
     )
 
     model_cfg = ModelConfig(
