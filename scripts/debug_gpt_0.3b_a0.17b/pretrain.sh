@@ -24,8 +24,8 @@ NODE_RANK=${NODE_RANK:-0}
 MASTER_ADDR=${MASTER_ADDR:-localhost}
 MASTER_PORT=${MASTER_PORT:-29500}
 GBS=${GBS:-2097152}
-B=${B:-8}
-T=${T:-4096}
+BATCH_SIZE=${BATCH_SIZE:-8}
+SEQ_LEN=${SEQ_LEN:-4096}
 SEP_SIZE=${SEP_SIZE:-1}
 
 echo "==================================="
@@ -36,7 +36,7 @@ echo "NUM_GPUS_PER_NODE:     $NUM_GPUS"
 echo "NODE_RANK:    $NODE_RANK"
 echo "MASTER_ADDR:  $MASTER_ADDR"
 echo "MASTER_PORT:  $MASTER_PORT"
-echo "BATCH_SIZE_PER_DEVICE:   $B"
+echo "BATCH_SIZE_PER_DEVICE:   $BATCH_SIZE"
 echo "==================================="
 
 DISTRIBUTED_ARGS="\
@@ -56,8 +56,8 @@ TRAINING_ARGS="\
   --mock_data_num_samples 12800 \
   --log_dir ./log \
   --total_batch_size $GBS \
-  --B $B \
-  --T $T \
+  --batch_size $BATCH_SIZE \
+  --seq_len $SEQ_LEN \
   --max_lr 6e-4 \
   --min_lr 6e-5 \
   --weight_decay 0.1 \
