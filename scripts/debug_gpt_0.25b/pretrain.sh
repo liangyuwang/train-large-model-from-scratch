@@ -27,6 +27,7 @@ GBS=${GBS:-2097152}
 BATCH_SIZE=${BATCH_SIZE:-8}
 SEQ_LEN=${SEQ_LEN:-4096}
 SEP_SIZE=${SEP_SIZE:-1}
+USE_COMPILE=${USE_COMPILE:-1}
 
 echo "==================================="
 echo "Distributed Training Configuration"
@@ -67,8 +68,10 @@ TRAINING_ARGS="\
   --debug \
   --do_save \
   --save_every_steps 500 \
-  --use_compile \
 "
+if [ $USE_COMPILE -eq 1 ]; then
+  TRAINING_ARGS="$TRAINING_ARGS --use_compile"
+fi
 
 PARALLELISM_ARGS="\
   --sep_size $SEP_SIZE \
