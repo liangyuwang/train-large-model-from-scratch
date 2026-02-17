@@ -67,7 +67,7 @@ class Trainer:
         self.master_process = self.rank == 0 # this process will do logging, checkpointing etc.
         
         # initialize data / sequence parallel groups
-        parallel_state.initialize_model_parallel(sep_size=config.parallel.sep_size)
+        parallel_state.initialize_model_parallel(config=config.parallel)
         self.dp_group = parallel_state.get_dp_group()
         self.dp_rank = parallel_state.get_dp_rank()
         self.dp_world_size = parallel_state.get_dp_world_size()
