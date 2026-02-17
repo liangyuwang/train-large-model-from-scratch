@@ -4,7 +4,7 @@ import os
 import math
 import glob
 from tqdm.auto import tqdm
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from itertools import cycle, islice
 from dataclasses import dataclass, field
 import numpy as np
@@ -46,6 +46,8 @@ class Trainer:
         self._init_dataset(config)
         self.training_info = get_training_info(
             len(self.train_dataset), config.train.seq_len, config.train.total_batch_size, config.train.batch_size, self.dp_world_size, config.train.max_steps, config.train.max_epochs)
+        if config.optim.warmup_steps >= self.training_info["max_steps"]:
+            raise ValueError(f"warmup_steps must be < max_steps. Got warmup_steps={config.optim.warmup_steps}, max_steps={self.training_info['max_steps']}.")
         if self.master_process:
             print(f"The training process will train {self.training_info['epochs']} epochs, {self.training_info['max_steps']} steps.")
             print(f"=> calculated gradient accumulation steps: {self.training_info['grad_accum_steps']}")
@@ -58,14 +60,14 @@ class Trainer:
         self.rank = int(os.environ['RANK'])
         self.local_rank = int(os.environ['LOCAL_RANK'])
         self.world_size = int(os.environ['WORLD_SIZE'])
-        dist.init_process_group(backend='nccl', init_method='env://')
+        dist.init_process_group(backend=config.parallel.backend, init_method=config.parallel.init_method)
         device = f'cuda:{self.local_rank}'
         torch.cuda.set_device(device)
-        set_seed(config.seed.seed + self.rank)
+        set_seed(config.seed.seed + self.rank, deterministic=config.seed.deterministic)
         self.master_process = self.rank == 0 # this process will do logging, checkpointing etc.
         
         # initialize data / sequence parallel groups
-        parallel_state.initialize_model_parallel(sep_size=config.parallel.sep_size)
+        parallel_state.initialize_model_parallel(config=config.parallel)
         self.dp_group = parallel_state.get_dp_group()
         self.dp_rank = parallel_state.get_dp_rank()
         self.dp_world_size = parallel_state.get_dp_world_size()
@@ -80,30 +82,40 @@ class Trainer:
         if config.data.use_mock_data:
             from torch.utils.data import Dataset
             class MockDataset(Dataset):
-                def __init__(self, length: int, seq_len: int, vocab_size: int = 50304):
+                def __init__(self, length: int, seq_len: int, vocab_size: int=50304, deterministic: bool=False, base_seed: int=0, seed_offset: int=0):
                     self.length = length
                     self.seq_len = seq_len
                     self.vocab_size = vocab_size
+                    self.deterministic = deterministic
+                    self.base_seed = int(base_seed)
+                    self.seed_offset = int(seed_offset)
                 def __len__(self):
                     return self.length
                 def __getitem__(self, idx):
-                    data = torch.randint(0, self.vocab_size, (self.seq_len+1,), dtype=torch.long)
+                    if self.deterministic:
+                        # Make each sample depend only on its global index, so different
+                        # distributed strategies produce identical mock tokens for the same idx.
+                        g = torch.Generator(device="cpu")
+                        g.manual_seed(self.base_seed + self.seed_offset + int(idx))
+                        data = torch.randint(0, self.vocab_size, (self.seq_len+1,), dtype=torch.long, generator=g)
+                    else:
+                        data = torch.randint(0, self.vocab_size, (self.seq_len+1,), dtype=torch.long)
                     x = data[:self.seq_len]
                     y = data[1:self.seq_len+1]
                     return {"input_ids": x, "labels": y}
-            self.train_dataset = MockDataset(config.data.mock_data_num_samples, config.train.seq_len)
+            self.train_dataset = MockDataset(config.data.mock_data_num_samples, config.train.seq_len, config.seed.deterministic, config.seed.seed)
             if config.train.do_val:
-                self.val_dataset = MockDataset(config.data.mock_data_num_samples // 10, config.train.seq_len)
+                self.val_dataset = MockDataset(config.data.mock_data_num_samples // 10, config.train.seq_len, config.seed.deterministic, config.seed.seed, 1_000_000_000)
         else:
             class CustomDataset: ...
             self.train_dataset = CustomDataset(dataset_path=config.data.dataset_path, split="train")
             if config.train.do_val:
                 self.val_dataset = CustomDataset(dataset_path=config.data.dataset_path, split="validation")
         self.train_sampler = DistributedSampler(self.train_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=True)
-        self.train_loader = DataLoader(self.train_dataset, batch_size=config.train.batch_size, sampler=self.train_sampler, num_workers=0, pin_memory=True)
+        self.train_loader = DataLoader(self.train_dataset, batch_size=config.train.batch_size, sampler=self.train_sampler, num_workers=config.data.num_workers, pin_memory=config.data.pin_memory)
         if config.train.do_val:
             self.val_sampler = DistributedSampler(self.val_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=False)
-            self.val_loader = DataLoader(self.val_dataset, batch_size=config.train.batch_size, sampler=self.val_sampler, num_workers=0, pin_memory=True)
+            self.val_loader = DataLoader(self.val_dataset, batch_size=config.train.batch_size, sampler=self.val_sampler, num_workers=config.data.num_workers, pin_memory=config.data.pin_memory)
         else:
             self.val_dataset = self.val_loader = None
 
@@ -118,7 +130,7 @@ class Trainer:
         if config.train.use_compile and hasattr(torch, 'compile'):
             model = torch.compile(model)
         #TODO: Here ZeRO-1 actually only need 'reduce' not 'all-reduce' used in DDP, we can develop a custom wrapper for ZeRO-1
-        self.model = DDP(model, process_group=self.dp_group, find_unused_parameters=True, gradient_as_bucket_view=True)
+        self.model = DDP(model, process_group=self.dp_group, find_unused_parameters=config.parallel.ddp_find_unused_parameters, gradient_as_bucket_view=config.parallel.ddp_gradient_as_bucket_view)
         self.raw_model = self.model.module
 
     def _init_optimizer(self, config: Config):
@@ -192,6 +204,15 @@ class Trainer:
         assert 0 <= decay_ratio <= 1
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff starts at 1 and goes to 0
         return min_lr + coeff * (max_lr - min_lr)
+
+    def _autocast_context(self, precision: str):
+        if precision == "bf16":
+            return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        if precision == "fp16":
+            raise NotImplementedError("FP16 precision is not supported yet")
+        if precision == "fp32":
+            return nullcontext()
+        raise ValueError(f"Unsupported precision: {precision}. Supported precisions are: bf16, fp32.")
         
     def _one_training_micro_step(self, config: Config, micro_step: int, data_batch: dict):
         x, y = data_batch["input_ids"], data_batch["labels"]
@@ -205,7 +226,7 @@ class Trainer:
         x = x.to(f'cuda:{self.local_rank}')
         y = y.to(f'cuda:{self.local_rank}')
         with self.profiler_record_fn("forward"):
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            with self._autocast_context(config.train.precision):
                 _, loss, logging_loss = self.model(x.reshape(x.shape[0],-1), y.reshape(y.shape[0],-1))
         loss = loss / self.training_info["grad_accum_steps"]
         with self.profiler_record_fn("backward"):
@@ -242,7 +263,8 @@ class Trainer:
         self.one_step_results["grad_norm"] = norm
     
     def _resume_from_checkpoint(self, steps_per_epoch: int):
-        pattern = os.path.join(self.log_dir, "*_model.pt")
+        ckpt_dir = self.config.ckpt.resume_path or self.log_dir
+        pattern = os.path.join(ckpt_dir, "*_model.pt")
         ckpts = sorted(glob.glob(pattern))
         if not ckpts:
             self.start_step = 0
@@ -270,7 +292,7 @@ class Trainer:
         step = meta.get('step', None)
         self.start_step = (step + 1) if (step is not None) else 0
         if self.master_process:
-            print(f"=> Resumed from {self.log_dir} | next_step={self.start_step}, "
+            print(f"=> Resumed from {ckpt_dir} | next_step={self.start_step}, "
                 f"sampler_epoch={epoch}, dataloader_iter_idx={iter_idx}")
         # 5) RNG: finally load RNG state
         rng_path = f"{ckpt_prefix}_rng_rank{self.rank}.pt"
@@ -311,7 +333,7 @@ class Trainer:
                 with open(self.log_file, "a") as f:
                     f.write(f"{step} val {self.one_step_results['val_loss'].item():.4f}\n")
             # 3) save
-            if not self.config.train.debug and step > 0 and (step % self.config.train.save_every_steps == 0 or last_step):
+            if self.config.ckpt.do_save and not self.config.train.debug and step > 0 and (step % self.config.ckpt.save_every_steps == 0 or last_step):
                 self.save(step)
             # 4) print
             t1 = time.time()
@@ -343,7 +365,7 @@ class Trainer:
                 y = y[:, seq_start_idx:seq_end_idx]
                 x = x.to(f'cuda:{self.local_rank}')
                 y = y.to(f'cuda:{self.local_rank}')
-                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                with self._autocast_context(self.config.train.precision):
                     logits, _, logging_loss = self.model(x.reshape(x.shape[0],-1), y.reshape(y.shape[0],-1))
                 loss = logging_loss / val_loss_steps
                 val_loss_accum += loss

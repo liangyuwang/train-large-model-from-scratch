@@ -1,4 +1,5 @@
 import torch.distributed as dist
+from training.config import ParallelConfig
 
 _SEP_GROUP = None
 _DP_GROUP = None
@@ -8,13 +9,14 @@ _SEP_SIZE = None
 _DP_SIZE = None
 _DP_SP_SIZE = None
 
-def initialize_model_parallel(sep_size: int):
+def initialize_model_parallel(config: ParallelConfig):
     """
     Initialize the distributed communication grid
     Must be called after dist.init_process_group!
     """
     global _SEP_GROUP, _DP_GROUP, _DP_SP_GROUP, _SEP_SIZE, _DP_SIZE, _DP_SP_SIZE
-    
+    sep_size = config.sep_size
+
     assert dist.is_initialized(), "Must initialize PyTorch distributed environment first!"
     
     world_size = dist.get_world_size()
