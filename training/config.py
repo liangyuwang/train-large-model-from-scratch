@@ -141,8 +141,8 @@ def build_config(args: argparse.Namespace) -> Config:
     )
     train_cfg = TrainingConfig(
         total_batch_size=args.total_batch_size,
-        B=args.B,
-        T=args.T,
+        batch_size=args.batch_size,
+        seq_len=args.seq_len,
         max_steps=args.max_steps,
         max_epochs=args.max_epochs,
         do_val=args.do_val,
@@ -213,9 +213,9 @@ def build_config(args: argparse.Namespace) -> Config:
 
 def validate_static(cfg: Config) -> None:
     # Basic sanity checks; runtime checks (world_size divisibility etc.) in Trainer after dist init.
-    if cfg.train.T <= 0:
+    if cfg.train.seq_len <= 0:
         raise ValueError("T must be positive.")
-    if cfg.train.B <= 0:
+    if cfg.train.batch_size <= 0:
         raise ValueError("micro batch size B must be positive.")
     if cfg.train.total_batch_size <= 0:
         raise ValueError("total_batch_size must be positive (tokens).")

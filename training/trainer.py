@@ -36,6 +36,24 @@ from utils import (
 
 class Trainer:
 
+    def __init__(self, config: Config):
+        self.config = config
+        self._init_parallelism(config)
+        assert config.train.total_batch_size % (config.train.batch_size * config.train.seq_len * self.dp_world_size) == 0, \
+            f"make sure total_batch_size {config.train.total_batch_size} is divisible by batch_size {config.train.batch_size} * seq_len {config.train.seq_len} * dp_world_size {self.dp_world_size}"
+        if self.master_process:
+            print(f"Training config: {config.as_dict()}")
+        self._init_dataset(config)
+        self.training_info = get_training_info(
+            len(self.train_dataset), config.train.seq_len, config.train.total_batch_size, config.train.batch_size, self.dp_world_size, config.train.max_steps, config.train.max_epochs)
+        if self.master_process:
+            print(f"The training process will train {self.training_info['epochs']} epochs, {self.training_info['max_steps']} steps.")
+            print(f"=> calculated gradient accumulation steps: {self.training_info['grad_accum_steps']}")
+            print(f"=> calculated tokens per step: {self.training_info['total_tokens_per_step']}")
+        self._init_model(config)
+        self._init_optimizer(config)
+        self._init_logging(config)
+
     def _init_parallelism(self, config: Config):
         self.rank = int(os.environ['RANK'])
         self.local_rank = int(os.environ['LOCAL_RANK'])
@@ -74,25 +92,25 @@ class Trainer:
                     y = data[1:self.seq_len+1]
                     return {"input_ids": x, "labels": y}
             self.train_dataset = MockDataset(config.data.mock_data_num_samples, config.train.seq_len)
-            if config.do_val:
+            if config.train.do_val:
                 self.val_dataset = MockDataset(config.data.mock_data_num_samples // 10, config.train.seq_len)
         else:
             class CustomDataset: ...
             self.train_dataset = CustomDataset(dataset_path=config.data.dataset_path, split="train")
-            if config.do_val:
+            if config.train.do_val:
                 self.val_dataset = CustomDataset(dataset_path=config.data.dataset_path, split="validation")
         self.train_sampler = DistributedSampler(self.train_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=True)
-        self.train_loader = DataLoader(self.train_dataset, batch_size=config.train.B, sampler=self.train_sampler, num_workers=0, pin_memory=True)
-        if config.do_val:
+        self.train_loader = DataLoader(self.train_dataset, batch_size=config.train.batch_size, sampler=self.train_sampler, num_workers=0, pin_memory=True)
+        if config.train.do_val:
             self.val_sampler = DistributedSampler(self.val_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=False)
-            self.val_loader = DataLoader(self.val_dataset, batch_size=config.train.B, sampler=self.val_sampler, num_workers=0, pin_memory=True)
+            self.val_loader = DataLoader(self.val_dataset, batch_size=config.train.batch_size, sampler=self.val_sampler, num_workers=0, pin_memory=True)
         else:
             self.val_dataset = self.val_loader = None
 
     def _init_model(self, config: Config):
         torch.set_float32_matmul_precision('high')
         self.model_config = config.model
-        self.model_config.seed = config.seed.seed
+        # self.model_config.seed = config.seed.seed
         model = GPT(self.model_config)
         params_config = get_model_params(self.model_config)
         if self.master_process:
@@ -145,22 +163,7 @@ class Trainer:
             self.profiler = None
         self.profiler_record_fn = torch.profiler.record_function if config.train.use_profiler else dummy_record_function
 
-    def __init__(self, config: Config):
-        self.config = config
-        self._init_parallelism(config)
-        assert config.train.total_batch_size % (config.train.batch_size * config.train.seq_len * self.dp_world_size) == 0, "make sure total_batch_size is divisible by B * T * dp_world_size"
-        if self.master_process:
-            print(f"Trainer config: {config.as_dict()}")
-            print(f"Model config: {self.model_config.as_dict()}")
-        self._init_dataset(config)
-        self.training_info = get_training_info(
-            len(self.train_dataset), config.train.seq_len, config.train.total_batch_size, config.train.batch_size, self.dp_world_size, config.train.max_steps, config.train.max_epochs)
-        if self.master_process:
-            print(f"The training process will train {self.training_info['epochs']} epochs, {self.training_info['max_steps']} steps.")
-            print(f"=> calculated gradient accumulation steps: {self.training_info['grad_accum_steps']}")
-            print(f"=> calculated tokens per step: {self.training_info['total_tokens_per_step']}")
-        self._init_model(config)
-        self._init_optimizer(config)
+    def _init_logging(self, config: Config):
         # create the log directory we will write checkpoints to and log to
         self.log_dir = os.path.join(
             config.logging.log_dir,
