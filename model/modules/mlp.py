@@ -133,7 +133,13 @@ class MoE(nn.Module):
         else:
             max_tokens = counts.max().item()
             if max_tokens == 0:
-                down_out = torch.empty_like(local_x)
+                # down_out = torch.empty_like(local_x)  # will break autograd graph, change to the following code
+                padded_x = local_x.view(self.num_local_experts, 0, self.hidden_size)
+                gate_out_padded = torch.bmm(padded_x, self.experts_gate_weights.transpose(1, 2))
+                up_out_padded = torch.bmm(padded_x, self.experts_up_weights.transpose(1, 2))
+                act_out_padded = self.experts_act_fn(gate_out_padded) * up_out_padded
+                down_out_padded = torch.bmm(act_out_padded, self.experts_down_weights.transpose(1, 2))
+                down_out = down_out_padded.view(0, self.hidden_size)
             else:
                 starts = torch.zeros_like(offs)
                 starts[1:] = offs[:-1]
@@ -142,7 +148,9 @@ class MoE(nn.Module):
                     self.num_local_experts, max_tokens, self.hidden_size, 
                     dtype=local_x.dtype, device=local_x.device
                 )
-                padded_x[local_expert_indices, relative_idx] = local_x
+                # padded_x[local_expert_indices, relative_idx] = local_x    # # will break autograd graph, change to the following code
+                padded_x = padded_x.index_put((local_expert_indices, relative_idx), local_x)
+                
                 gate_out_padded = torch.bmm(padded_x, self.experts_gate_weights.transpose(1, 2))
                 up_out_padded = torch.bmm(padded_x, self.experts_up_weights.transpose(1, 2))
                 act_out_padded = self.experts_act_fn(gate_out_padded) * up_out_padded
