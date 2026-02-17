@@ -7,11 +7,11 @@ from distributed import parallel_state
 
 
 class CrossEntropyLoss(nn.Module):
-    def __init__(self, ignore_index=-100):
+    def __init__(self, ignore_index: int = -100):
         super().__init__()
         self.ignore_index = ignore_index
 
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor):
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         logits: [B, T_local, Vocab_Size]
         targets: [B, T_local]

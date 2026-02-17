@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
 
-from ..config import GPTConfig
+from training.config import ModelConfig
 from distributed import (
     parallel_state,
     ep_all_to_all,
@@ -15,7 +15,7 @@ from utils import (
 
 class MLP(nn.Module):
     """Dense MLP or Single expert in MoE"""
-    def __init__(self, config: GPTConfig, use_moe: bool = False):
+    def __init__(self, config: ModelConfig, use_moe: bool = False):
         super().__init__()
         self.device = torch.cuda.current_device()
         self.config = config
@@ -40,12 +40,12 @@ class MLP(nn.Module):
             torch.manual_seed(base_seed)
             torch.nn.init.normal_(self.down_proj.weight, mean=0.0, std=self.config.init_std)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
 
 
 class MoE(nn.Module):
-    def __init__(self, config: GPTConfig, top_k: int = None):
+    def __init__(self, config: ModelConfig, top_k: int | None = None):
         super().__init__()
         self.device = torch.cuda.current_device()
         self.config = config
@@ -92,7 +92,7 @@ class MoE(nn.Module):
             torch.manual_seed(base_seed)
             nn.init.normal_(self.router.weight, mean=0.0, std=self.config.init_std)
     
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B, T, D = x.size()
         ep_group = parallel_state.get_ep_group()
         ep_world_size = parallel_state.get_ep_world_size()

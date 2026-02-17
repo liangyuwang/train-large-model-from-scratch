@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-from .config import GPTConfig
+from training.config import ModelConfig
 from .modules.attn import Attention
 from .modules.mlp import MLP, MoE
 from .modules.norm import LayerNorm
@@ -18,7 +18,7 @@ EXPERT_LOCAL_PARAM_SUFFIXES = (
 
 class Block(nn.Module):
 
-    def __init__(self, config: GPTConfig, use_moe: bool = True, top_k: int = None):
+    def __init__(self, config: ModelConfig, use_moe: bool = True, top_k: int = None):
         super().__init__()
         self.use_moe = use_moe
         self.device = torch.cuda.current_device()
@@ -37,7 +37,7 @@ class Block(nn.Module):
 
 class GPT(nn.Module):
 
-    def __init__(self, config: GPTConfig):
+    def __init__(self, config: ModelConfig):
         super().__init__()
         self.device = torch.cuda.current_device()
         self.config = config

@@ -2,14 +2,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..config import GPTConfig
+from training.config import ModelConfig
 from distributed import (
     parallel_state,
     ulysses_all_to_all,
 )
 
 
-def rope_impl(q, k, position_ids, rope_theta=10000.0):
+def rope_impl(q: torch.Tensor, k: torch.Tensor, position_ids: torch.Tensor, rope_theta: float = 10000.0) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Shared RoPE (Rotary Positional Embedding) implementation for Qwen3 family models.
     Supports both single and batched position_ids
@@ -68,7 +68,7 @@ def rope_impl(q, k, position_ids, rope_theta=10000.0):
     return q_embed, k_embed
 
 
-def gqa_impl(k, v, num_key_value_heads, num_attention_heads):
+def gqa_impl(k: torch.Tensor, v: torch.Tensor, num_key_value_heads: int, num_attention_heads: int) -> tuple[torch.Tensor, torch.Tensor]:
     """
     k,v: (B, H_kv, T, D)
     return: (B, H_q, T, D)
@@ -90,7 +90,7 @@ def gqa_impl(k, v, num_key_value_heads, num_attention_heads):
 
 class Attention(nn.Module):
 
-    def __init__(self, config: GPTConfig):
+    def __init__(self, config: ModelConfig):
         super().__init__()
         assert config.hidden_size % config.num_attention_heads == 0
         self.device = torch.cuda.current_device()
