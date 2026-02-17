@@ -73,7 +73,7 @@ class DataConfig:
     use_mock_data: bool = False
     mock_data_num_samples: int = 1280
     num_workers: int = 0
-    pin_memory: bool = False
+    pin_memory: bool = True
 
 @dataclass(frozen=True)
 class OptimConfig:
@@ -223,6 +223,8 @@ def validate_static(cfg: Config) -> None:
         raise ValueError("sep_size must be positive.")
     if cfg.train.precision not in ("bf16", "fp16", "fp32"):
         raise ValueError(f"Unsupported precision: {cfg.train.precision}")
+    if cfg.train.max_steps is not None and cfg.optim.warmup_steps >= cfg.train.max_steps:
+        raise ValueError("warmup_steps must be < max_steps when max_steps is set.")
     # Model shape constraints (minimal)
     if cfg.model.hidden_size % cfg.model.num_attention_heads != 0:
         raise ValueError("hidden_size must be divisible by num_attention_heads.")
