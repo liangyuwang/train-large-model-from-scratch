@@ -30,8 +30,8 @@ def _add_training_args(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
     g = parser.add_argument_group("training")
     # tokens-based global batch size (like repo)
     g.add_argument("--total_batch_size", type=int, default=524288, help="global batch size in tokens")
-    g.add_argument("--batch_size", "--B", dest="B", type=int, default=8, help="micro batch size per device")
-    g.add_argument("--seq_len", "--T", dest="T", type=int, default=4096, help="sequence length")
+    g.add_argument("--batch_size", type=int, default=8, help="micro batch size per device")
+    g.add_argument("--seq_len", type=int, default=4096, help="sequence length")
     g.add_argument("--max_steps", type=int, default=None)
     g.add_argument("--max_epochs", type=int, default=1)
 
@@ -104,7 +104,7 @@ def _add_parallel_args(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
     g.add_argument("--sep_size", type=int, default=8, help="SEP size (SP/EP joint parallel group size)")
     g.add_argument("--ddp_find_unused_parameters", action="store_true")
     g.add_argument("--ddp_gradient_as_bucket_view", action="store_true")
-    g.add_argument("--zero1", action="store_true", help="enable ZeRO-1 style optimizer sharding (repo DistributedOptimizer)")
+    g.add_argument("--use_distributed_optimizer", action="store_true", help="enable ZeRO-1 style optimizer sharding (DistributedOptimizer)")
     return parser
 
 

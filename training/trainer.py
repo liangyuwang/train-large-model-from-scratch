@@ -27,7 +27,6 @@ from distributed import (
     allreduce_non_expert_grads_across_sp,
 )
 from utils import (
-    get_training_args, 
     get_training_info,
     set_seed,
     get_model_params,
@@ -36,6 +35,24 @@ from utils import (
 
 
 class Trainer:
+
+    def __init__(self, config: Config):
+        self.config = config
+        self._init_parallelism(config)
+        assert config.train.total_batch_size % (config.train.batch_size * config.train.seq_len * self.dp_world_size) == 0, \
+            f"make sure total_batch_size {config.train.total_batch_size} is divisible by batch_size {config.train.batch_size} * seq_len {config.train.seq_len} * dp_world_size {self.dp_world_size}"
+        if self.master_process:
+            print(f"Training config: {config.as_dict()}")
+        self._init_dataset(config)
+        self.training_info = get_training_info(
+            len(self.train_dataset), config.train.seq_len, config.train.total_batch_size, config.train.batch_size, self.dp_world_size, config.train.max_steps, config.train.max_epochs)
+        if self.master_process:
+            print(f"The training process will train {self.training_info['epochs']} epochs, {self.training_info['max_steps']} steps.")
+            print(f"=> calculated gradient accumulation steps: {self.training_info['grad_accum_steps']}")
+            print(f"=> calculated tokens per step: {self.training_info['total_tokens_per_step']}")
+        self._init_model(config)
+        self._init_optimizer(config)
+        self._init_logging(config)
 
     def _init_parallelism(self, config: Config):
         self.rank = int(os.environ['RANK'])
@@ -74,26 +91,26 @@ class Trainer:
                     x = data[:self.seq_len]
                     y = data[1:self.seq_len+1]
                     return {"input_ids": x, "labels": y}
-            self.train_dataset = MockDataset(config.data.mock_data_num_samples, config.train.T)
-            if config.do_val:
-                self.val_dataset = MockDataset(config.data.mock_data_num_samples // 10, config.train.T)
+            self.train_dataset = MockDataset(config.data.mock_data_num_samples, config.train.seq_len)
+            if config.train.do_val:
+                self.val_dataset = MockDataset(config.data.mock_data_num_samples // 10, config.train.seq_len)
         else:
             class CustomDataset: ...
             self.train_dataset = CustomDataset(dataset_path=config.data.dataset_path, split="train")
-            if config.do_val:
+            if config.train.do_val:
                 self.val_dataset = CustomDataset(dataset_path=config.data.dataset_path, split="validation")
         self.train_sampler = DistributedSampler(self.train_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=True)
-        self.train_loader = DataLoader(self.train_dataset, batch_size=config.train.B, sampler=self.train_sampler, num_workers=0, pin_memory=True)
-        if config.do_val:
+        self.train_loader = DataLoader(self.train_dataset, batch_size=config.train.batch_size, sampler=self.train_sampler, num_workers=0, pin_memory=True)
+        if config.train.do_val:
             self.val_sampler = DistributedSampler(self.val_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank, shuffle=False)
-            self.val_loader = DataLoader(self.val_dataset, batch_size=config.train.B, sampler=self.val_sampler, num_workers=0, pin_memory=True)
+            self.val_loader = DataLoader(self.val_dataset, batch_size=config.train.batch_size, sampler=self.val_sampler, num_workers=0, pin_memory=True)
         else:
             self.val_dataset = self.val_loader = None
 
     def _init_model(self, config: Config):
         torch.set_float32_matmul_precision('high')
         self.model_config = config.model
-        self.model_config.seed = config.seed.seed
+        # self.model_config.seed = config.seed.seed
         model = GPT(self.model_config)
         params_config = get_model_params(self.model_config)
         if self.master_process:
@@ -146,30 +163,15 @@ class Trainer:
             self.profiler = None
         self.profiler_record_fn = torch.profiler.record_function if config.train.use_profiler else dummy_record_function
 
-    def __init__(self, config: Config):
-        self.config = config
-        self._init_parallelism(config)
-        assert config.train.total_batch_size % (config.train.B * config.train.T * self.dp_world_size) == 0, "make sure total_batch_size is divisible by B * T * dp_world_size"
-        if self.master_process:
-            print(f"Trainer config: {config}")
-            print(f"Model config: {config.model}")
-        self._init_dataset(config)
-        self.training_info = get_training_info(
-            len(self.train_dataset), config.train.T, config.train.total_batch_size, config.train.B, self.dp_world_size, config.train.max_steps, config.train.max_epochs)
-        if self.master_process:
-            print(f"The training process will train {self.training_info['epochs']} epochs, {self.training_info['max_steps']} steps.")
-            print(f"=> calculated gradient accumulation steps: {self.training_info['grad_accum_steps']}")
-            print(f"=> calculated tokens per step: {self.training_info['total_tokens_per_step']}")
-        self._init_model(config)
-        self._init_optimizer(config)
+    def _init_logging(self, config: Config):
         # create the log directory we will write checkpoints to and log to
         self.log_dir = os.path.join(
             config.logging.log_dir,
             f"{config.logging.exp_name}_"
             f"modelsize_{sum(p.numel() for p in self.raw_model.parameters())}_"
             f"lr{config.optim.max_lr}_"
-            f"B{config.train.total_batch_size}_"
-            f"T{config.train.T}_"
+            f"BS{config.train.batch_size}_"
+            f"SL{config.train.seq_len}_"
             f"DP{self.dp_world_size}_"
         )
         if self.master_process:
@@ -314,10 +316,10 @@ class Trainer:
             # 4) print
             t1 = time.time()
             dt = t1 - t0 # time difference in seconds
-            tokens_processed = self.config.train.B * self.config.train.T * self.training_info["grad_accum_steps"] * self.dp_world_size
+            tokens_processed = self.config.train.batch_size * self.config.train.seq_len * self.training_info["grad_accum_steps"] * self.dp_world_size
             tokens_per_sec = tokens_processed / dt
             mfu, actual, peak = compute_mfu(
-                self.raw_model, self.config.train.B, self.config.train.T, dt, self.training_info["grad_accum_steps"], dtype="bf16")
+                self.raw_model, self.config.train.batch_size, self.config.train.seq_len, dt, self.training_info["grad_accum_steps"], dtype="bf16")
             if self.master_process:
                 tqdm.write(f"step {step:5d} | loss: {self.one_step_results['loss'].item():.6f} | lr {self.one_step_results['lr']:.4e} | grad norm: {self.one_step_results['grad_norm']:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f} | MFU: {mfu*100:.2f}%")
                 with open(self.log_file, "a") as f:
@@ -373,7 +375,7 @@ class Trainer:
                 'model_config': self.raw_model.config.as_dict(),
                 'step': step,
                 'this_step_results': self.one_step_results,
-                'opt_part_assignment': self.optimizer.part_assignment,
+                'opt_part_assignment': self.optimizer.part_assignment if hasattr(self.optimizer, 'part_assignment') else None,
                 'sampler_state': {
                     'epoch': sampler_epoch_next,
                     'iter_idx': sampler_iter_idx_next,
