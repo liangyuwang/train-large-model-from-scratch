@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from training.arguments import parse_args
-from training.config import build_config
-from training.trainer import Trainer
+from training import parse_args, build_config, Trainer
 
+# You can also modify the trainer class to customize the training process, 
+# and model modules to customize the model architecture.
+# Following is a minimal example of how to use the trainer class.
 
 def main():
     args = parse_args()
