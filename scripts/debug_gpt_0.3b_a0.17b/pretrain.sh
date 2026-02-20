@@ -30,9 +30,12 @@ MAX_LR=${MAX_LR:-6e-4}
 MIN_LR=${MIN_LR:-6e-5}
 
 SEED=${SEED:-1337}
+
 BATCH_SIZE=${BATCH_SIZE:-8}
 SEQ_LEN=${SEQ_LEN:-4096}
 GBS=${GBS:-1024}
+TOTAL_BATCH_SIZE=$(($GBS * $SEQ_LEN))
+
 SEP_SIZE=${SEP_SIZE:-1}
 USE_COMPILE=${USE_COMPILE:-1}
 
@@ -52,7 +55,7 @@ TRAINING_ARGS="\
   --use_mock_data \
   --mock_data_num_samples 12800 \
   --log_dir ./log \
-  --total_batch_size ${${GBS} * ${SEQ_LEN}} \
+  --total_batch_size $TOTAL_BATCH_SIZE \
   --batch_size $BATCH_SIZE \
   --seq_len $SEQ_LEN \
   --max_lr $MAX_LR \

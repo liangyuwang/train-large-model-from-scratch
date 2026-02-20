@@ -38,7 +38,7 @@ class Trainer:
 
     def __init__(self, config: Config):
         self.config = config
-        self._init_parallelism(config)
+        self._init_distributed(config)
         assert config.train.total_batch_size % (config.train.batch_size * config.train.seq_len * self.dp_world_size) == 0, \
             f"make sure total_batch_size {config.train.total_batch_size} is divisible by batch_size {config.train.batch_size} * seq_len {config.train.seq_len} * dp_world_size {self.dp_world_size}"
         if self.master_process:
@@ -56,7 +56,7 @@ class Trainer:
         self._init_optimizer(config)
         self._init_logging(config)
 
-    def _init_parallelism(self, config: Config):
+    def _init_distributed(self, config: Config):
         self.rank = int(os.environ['RANK'])
         self.local_rank = int(os.environ['LOCAL_RANK'])
         self.world_size = int(os.environ['WORLD_SIZE'])
