@@ -17,28 +17,19 @@
 #     NUM_NODES=2 NODE_RANK=1 MASTER_ADDR=192.168.1.100 bash scripts/debug_gpt_0.3b_a0.17b/pretrain.sh
 #
 
-# Multi-node configuration (can be overridden by environment variables)
+# Multi-node config (can be overridden by environment variables)
 NUM_NODES=${NUM_NODES:-1}
 NUM_GPUS=${NUM_GPUS:-8}
 NODE_RANK=${NODE_RANK:-0}
 MASTER_ADDR=${MASTER_ADDR:-localhost}
 MASTER_PORT=${MASTER_PORT:-29500}
+
+# Custom config
 GBS=${GBS:-2097152}
 BATCH_SIZE=${BATCH_SIZE:-8}
 SEQ_LEN=${SEQ_LEN:-4096}
 SEP_SIZE=${SEP_SIZE:-1}
 USE_COMPILE=${USE_COMPILE:-1}
-
-echo "==================================="
-echo "Distributed Training Configuration"
-echo "==================================="
-echo "NUM_NODES:    $NUM_NODES"
-echo "NUM_GPUS_PER_NODE:     $NUM_GPUS"
-echo "NODE_RANK:    $NODE_RANK"
-echo "MASTER_ADDR:  $MASTER_ADDR"
-echo "MASTER_PORT:  $MASTER_PORT"
-echo "BATCH_SIZE_PER_DEVICE:   $BATCH_SIZE"
-echo "==================================="
 
 DISTRIBUTED_ARGS="\
   --nnodes=$NUM_NODES \
