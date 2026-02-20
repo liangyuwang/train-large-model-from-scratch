@@ -76,6 +76,8 @@ class GPT(nn.Module):
         """
         Approximate model FLOPs for forward and backward pass.
         """
+        sp_size = parallel_state.get_sp_world_size()
+        ep_size = parallel_state.get_ep_world_size()
         # Q, K, V projection (3D->D) + Out projection (D->D)
         qkv_out_flops = 8 * batch_size * seq_len * self.config.hidden_size * self.config.hidden_size  # 6BLD^2 + 2BLD^2
         # QK^T + softmaxV
@@ -89,8 +91,9 @@ class GPT(nn.Module):
                 + 2 * batch_size * seq_len * intermediate_size * self.config.hidden_size
         expert_gate_flops = 2 * batch_size * seq_len * self.config.hidden_size * self.config.num_experts  # gate_proj(D->E)
         if self.use_moe:
-            per_layer_flops = attn_flops + expert_gate_flops + self.config.num_experts_per_tok * ffn_flops    # FLOPs per layer
+            per_layer_flops = (attn_flops + expert_gate_flops) / sp_size \
+                            + (self.config.num_experts_per_tok * ffn_flops) / ep_size    # FLOPs per layer
         else:
-            per_layer_flops = attn_flops + ffn_flops    # total FLOPs
+            per_layer_flops = (attn_flops + ffn_flops) / sp_size    # total FLOPs
         total_flops = 3 * self.config.num_layer * per_layer_flops  # fwd + bwd ≈ 3 × fwd FLOPs
         return total_flops
