@@ -105,7 +105,7 @@ class Trainer:
                     return {"input_ids": x, "labels": y}
             self.train_dataset = MockDataset(config.data.mock_data_num_samples, config.train.seq_len, deterministic=config.seed.deterministic, base_seed=config.seed.seed)
             if config.train.do_val:
-                self.val_dataset = MockDataset(config.data.mock_data_num_samples // 10, config.train.seq_len, deterministic=config.seed.deterministic, base_seed=config.seed.seed, 1_000_000_000)
+                self.val_dataset = MockDataset(config.data.mock_data_num_samples // 10, config.train.seq_len, deterministic=config.seed.deterministic, base_seed=config.seed.seed, seed_offset=1_000_000_000)
         else:
             class CustomDataset: ...
             self.train_dataset = CustomDataset(dataset_path=config.data.dataset_path, split="train")
