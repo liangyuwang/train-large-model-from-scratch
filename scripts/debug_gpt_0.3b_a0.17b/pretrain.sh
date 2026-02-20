@@ -37,6 +37,7 @@ GBS=${GBS:-1024}
 TOTAL_BATCH_SIZE=$(($GBS * $SEQ_LEN))
 
 SEP_SIZE=${SEP_SIZE:-1}
+BATCH_SIZE_PER_DP_RANK=$(($BATCH_SIZE * $SEP_SIZE))
 USE_COMPILE=${USE_COMPILE:-1}
 
 DISTRIBUTED_ARGS="\
@@ -56,7 +57,7 @@ TRAINING_ARGS="\
   --mock_data_num_samples 12800 \
   --log_dir ./log \
   --total_batch_size $TOTAL_BATCH_SIZE \
-  --batch_size $BATCH_SIZE \
+  --batch_size $BATCH_SIZE_PER_DP_RANK \
   --seq_len $SEQ_LEN \
   --max_lr $MAX_LR \
   --min_lr $MIN_LR \
