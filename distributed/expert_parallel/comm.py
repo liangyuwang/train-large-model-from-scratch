@@ -1,4 +1,5 @@
 import torch
+import torch._dynamo
 import torch.distributed as dist
 
 class EPAllToAll(torch.autograd.Function):
@@ -38,4 +39,6 @@ class EPAllToAll(torch.autograd.Function):
         )
         return grad_input, None, None, None
 
-ep_all_to_all = EPAllToAll.apply
+@torch._dynamo.disable  # torch compile may remove .contiguous()
+def ep_all_to_all(hidden_states, input_splits, output_splits, ep_group):
+    return EPAllToAll.apply(hidden_states, input_splits, output_splits, ep_group)

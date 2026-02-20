@@ -1,4 +1,5 @@
 import torch
+import torch._dynamo
 import torch.distributed as dist
 
 class UlyssesAllToAll(torch.autograd.Function):
@@ -18,6 +19,7 @@ class UlyssesAllToAll(torch.autograd.Function):
         dist.all_to_all_single(grad_input, grad_output, group=sp_group)
         return grad_input, None
 
+@torch._dynamo.disable  # torch compile may remove .contiguous()
 def ulysses_all_to_all(input_tensor, sp_group):
     return UlyssesAllToAll.apply(input_tensor, sp_group)
 
