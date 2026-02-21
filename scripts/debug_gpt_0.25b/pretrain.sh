@@ -40,6 +40,9 @@ SEP_SIZE=${SEP_SIZE:-1}
 BATCH_SIZE_PER_DP_RANK=$(($BATCH_SIZE * $SEP_SIZE))
 USE_COMPILE=${USE_COMPILE:-1}
 
+DEBUG=${DEBUG:-1}
+DETER_MODE=${DETER_MODE:-1} # deter mode for precision alignment
+
 DISTRIBUTED_ARGS="\
   --nnodes=$NUM_NODES \
   --nproc_per_node=$NUM_GPUS \
@@ -65,12 +68,17 @@ TRAINING_ARGS="\
   --grad_clip_value 1.0 \
   --warmup_steps $LR_WARMUP_STEPS \
   --max_epochs 1 \
-  --debug \
   --do_save \
   --save_every_steps 500 \
 "
+if [ $DEBUG -eq 1 ]; then
+  TRAINING_ARGS="$TRAINING_ARGS --debug"
+fi
 if [ $USE_COMPILE -eq 1 ]; then
   TRAINING_ARGS="$TRAINING_ARGS --use_compile"
+fi
+if [ $DETER_MODE -eq 1 ]; then
+  TRAINING_ARGS="$TRAINING_ARGS --deterministic"
 fi
 
 PARALLELISM_ARGS="\

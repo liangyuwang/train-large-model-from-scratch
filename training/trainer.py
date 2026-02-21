@@ -185,6 +185,7 @@ class Trainer:
             f"BS{config.train.batch_size}_"
             f"SL{config.train.seq_len}_"
             f"DP{self.dp_world_size}_"
+            f"SEP{parallel_state.get_sep_world_size()}_"
         )
         if self.master_process:
             os.makedirs(self.log_dir, exist_ok=True)
