@@ -34,7 +34,6 @@ A minimal, hackable pre-training stack for GPT-style language models. This proje
 .
 ├── model/                              # Model architecture
 │   ├── __init__.py
-│   ├── config.py                       # GPTConfig dataclass
 │   ├── gpt.py                          # GPT model implementation
 │   └── modules/                        # Modular components
 │       ├── attn.py                     # Attention mechanisms
@@ -43,32 +42,41 @@ A minimal, hackable pre-training stack for GPT-style language models. This proje
 │       ├── loss.py                     # SP-aware cross entropy loss
 │       └── emb.py                      # Embedding layers
 │
-├── distributed/                       # Distributed training components
+├── training/                           # Training pipeline
 │   ├── __init__.py
-│   ├── parallel_state.py              # DP/SEP process group construction
+│   ├── config.py                       # Config dataclasses (ModelConfig, etc.)
+│   ├── arguments.py                    # CLI argument definitions
+│   └── trainer.py                      # Trainer and dataset init
+│
+├── distributed/                        # Distributed training components
+│   ├── __init__.py
+│   ├── parallel_state.py               # DP/SEP process group construction
 │   ├── zero1/
 │   │   └── distributed_optimizer.py   # ZeRO-1 implementation
 │   ├── sequence_parallel/
-│   │   └── ulysses.py                 # SP collectives and grad sync helpers
+│   │   └── ulysses.py                  # SP collectives and grad sync helpers
 │   └── expert_parallel/
-│       └── comm.py                    # EP all-to-all communication
+│       └── comm.py                     # EP all-to-all communication
 │
-├── utils/                             # Utility functions
+├── utils/                              # Utility functions
 │   ├── __init__.py
-│   ├── model.py                       # Model utilities (param counting, etc.)
-│   ├── training.py                    # Argument parsing and schedule helpers
-│   └── profile.py                     # Profiling and MFU computation
+│   ├── model.py                        # Model utilities (param counting, etc.)
+│   ├── training.py                     # Schedule helpers (get_training_info, etc.)
+│   └── profile.py                      # Profiling and MFU computation
 │
-├── scripts/                           # Launch scripts
+├── scripts/                            # Launch scripts
 │   ├── README.md
 │   ├── debug_gpt_0.25b/
-│   │   └── pretrain.sh
+│   │   └── pretrain.sh                 # 0.25B debug (pretrain_debug.py)
 │   ├── debug_gpt_0.3b_a0.17b/
-│   │   └── pretrain.sh
+│   │   └── pretrain.sh                 # 0.3B MoE debug (pretrain_debug.py)
+│   ├── example_gpt_0.25b/
+│   │   └── pretrain.sh                 # 0.25B example with custom data (pretrain_example.py)
 │   └── gpt_3b/
 │       └── pretrain.sh
 │
-├── train.py                           # Main training script
+├── pretrain_debug.py                   # Debug entry (mock data, minimal deps)
+├── pretrain_example.py                 # Example entry (custom dataset / tokenizer)
 └── README.md
 ```
 
@@ -79,7 +87,6 @@ A minimal, hackable pre-training stack for GPT-style language models. This proje
 - tqdm
 - numpy
 
-```
 ## Quick Start
 
 ### 1. Single Node Training
@@ -100,13 +107,13 @@ SEP_SIZE=2 bash scripts/debug_gpt_0.25b/pretrain.sh
 **Direct command for quick testing:**
 
 ```bash
-torchrun --nproc_per_node=8 train.py \
+torchrun --nproc_per_node=8 pretrain_debug.py \
   --exp_name debug_test \
   --use_mock_data \
   --mock_data_num_samples 1280 \
   --total_batch_size 524288 \
-  --B 8 \
-  --T 4096 \
+  --batch_size 8 \
+  --seq_len 4096 \
   --sep_size 1 \
   --max_epochs 1 \
   --debug
@@ -130,35 +137,27 @@ When running under some distributed training platforms, You do not need to speci
 
 ### 3. Custom Dataset
 
-Prepare your dataset and modify the `_init_dataset` method in `train.py`:
-
-```python
-def _init_dataset(self, config: TrainerConfig):
-    # Replace CustomDataset with your dataset implementation
-    from your_data_module import YourDataset
-    self.train_dataset = YourDataset(
-        dataset_path=config.dataset_path, 
-        split="train"
-    )
-```
+Use the example entry point and override `_init_dataset`: see `pretrain_example.py` for a subclass that uses a real dataset and tokenizer. The base implementation (mock data) lives in `training/trainer.py`; override it in your entry script or subclass `Trainer` and pass your dataset there.
 
 ## Configuration
 
-### Model Configuration (`GPTConfig`)
+Configuration is built from CLI arguments via `training/arguments.py` and assembled into a unified `Config` in `training/config.py`.
+
+### Model Configuration (`ModelConfig` in `training/config.py`)
 
 ```python
 @dataclass
-class GPTConfig:
+class ModelConfig:
     block_size: int = 4096              # Maximum sequence length
     vocab_size: int = 50304             # Vocabulary size
     num_layer: int = 32                 # Number of transformer layers
-    num_attention_heads: int = 128      # Number of attention heads
+    num_attention_heads: int = 128       # Number of attention heads
     num_key_value_heads: int = 8        # Number of KV heads (GQA)
     hidden_size: int = 1024             # Hidden dimension
     intermediate_size: int = 4096       # FFN intermediate size
     dropout: float = 0.0                # Dropout rate
     tied_lm_head: bool = True           # Tie input/output embeddings
-    
+
     # Mixture of Experts (optional)
     use_moe: bool = False               # Enable MoE
     num_experts: int = 128              # Total number of experts
@@ -166,44 +165,41 @@ class GPTConfig:
     moe_intermediate_size: int = 256    # Expert FFN size
 ```
 
-### Training Configuration (`TrainerConfig`)
+### Training Arguments (CLI → `TrainingConfig`)
 
-Key parameters in `train.py`:
+Key CLI options (see `training/arguments.py` for full list):
 
-```python
-@dataclass
-class TrainerConfig:
-    exp_name: str = "gpt"               # Experiment name
-    total_batch_size: int = 524288      # Total tokens per step
-    B: int = 8                          # Micro batch size per device
-    T: int = 4096                       # Sequence length
-    max_lr: float = 4e-3                # Maximum learning rate
-    min_lr: float = 3e-5                # Minimum learning rate
-    weight_decay: float = 0.1           # AdamW weight decay
-    grad_clip_value: float = 1.0        # Gradient clipping threshold
-    warmup_steps: int = 1000            # LR warmup steps
-    max_epochs: int = 1                 # Training epochs
-    save_every_steps: int = 5000        # Checkpoint frequency
-    use_compile: bool = False           # PyTorch 2.0 compilation
-```
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--exp_name` | `gpt` | Experiment name |
+| `--total_batch_size` | `524288` | Global batch size in tokens |
+| `--batch_size` | `8` | Micro batch size per device |
+| `--seq_len` | `4096` | Sequence length |
+| `--max_lr` / `--min_lr` | `4e-3` / `3e-5` | Learning rate range |
+| `--weight_decay` | `0.1` | AdamW weight decay |
+| `--grad_clip_value` | `1.0` | Gradient clipping |
+| `--warmup_steps` | `1000` | LR warmup steps |
+| `--max_epochs` | `1` | Training epochs |
+| `--save_every_steps` | `5000` | Checkpoint frequency |
+| `--use_compile` | flag | PyTorch 2.0 compilation |
 
 ### Parallelism Configuration
 
 `sep_size` controls SEP group size (sequence-expert joint parallelism).
 
-- CLI flag: `--sep_size` (default: `8` in `utils/training.py`)
+- CLI flag: `--sep_size` (default: `8` in `training/arguments.py`)
 - Script env var: `SEP_SIZE` (mapped to `--sep_size`)
 - Dense models (`--use_moe` disabled): SEP degenerates to pure SP.
 - Constraints:
   - `WORLD_SIZE % sep_size == 0`
-  - sequence length must be divisible by SEP size (`T % sep_size == 0`)
+  - sequence length must be divisible by SEP size (`seq_len % sep_size == 0`)
 
 Example:
 
 ```bash
-torchrun --nproc_per_node=8 train.py \
-  --B 8 \
-  --T 4096 \
+torchrun --nproc_per_node=8 pretrain_debug.py \
+  --batch_size 8 \
+  --seq_len 4096 \
   --sep_size 2 \
   --max_epochs 1
 ```
@@ -230,7 +226,7 @@ Memory-efficient optimizer state partitioning:
 
 Automatically computed based on:
 ```
-grad_accum_steps = total_batch_size / (B × T × num_gpus)
+grad_accum_steps = total_batch_size / (batch_size × seq_len × num_dp_ranks)
 ```
 
 ### Learning Rate Schedule
@@ -251,7 +247,7 @@ MFU = (Actual FLOPs) / (Peak Hardware FLOPs)
 Enable PyTorch profiler for performance analysis:
 
 ```bash
-python train.py \
+python pretrain_debug.py \
   --use_profiler \
   --steps_to_profile 15 20
 ```
@@ -291,16 +287,7 @@ This generates a Chrome trace file at `<log_dir>/rank0_trace.json` that can be v
 
 ### Custom Dataset
 
-Implement your dataset class and modify `_init_dataset` in `train.py`:
-
-```python
-class YourDataset(Dataset):
-    def __getitem__(self, idx):
-        return {
-            "input_ids": torch.tensor(...),  # shape: (seq_len,)
-            "labels": torch.tensor(...)      # shape: (seq_len,)
-        }
-```
+Implement your dataset class and override `_init_dataset`: subclass `Trainer` in your entry script (e.g. `pretrain_example.py`) and set `self.train_dataset` to your dataset. Each item should provide tensors compatible with the trainer (e.g. contiguous token ids of length `seq_len+1` for causal LM).
 
 ### Custom Architecture
 
@@ -311,13 +298,13 @@ Modify components in `model/modules/`:
 
 ### Custom Optimizer
 
-Replace AdamW in `_init_optimizer`:
+Replace AdamW in `_init_optimizer` in `training/trainer.py` (or in a `Trainer` subclass):
 
 ```python
-def _init_optimizer(self, config: TrainerConfig):
+def _init_optimizer(self, config: Config):
     self.optimizer = YourOptimizer(
-        self.raw_model.parameters(), 
-        lr=config.max_lr
+        self.raw_model.parameters(),
+        lr=config.optim.max_lr,
     )
     self.optimizer = DistributedOptimizer(
         optimizer=self.optimizer,
@@ -348,7 +335,7 @@ Example:
 ## Performance Tips
 
 1. **Enable compilation**: Add `--use_compile` for PyTorch 2.0+ (20-30% speedup)
-2. **Tune batch size**: Maximize `B` per GPU to improve throughput
+2. **Tune batch size**: Maximize `--batch_size` per GPU to improve throughput
 3. **Use Flash Attention**: Ensure Flash Attention is available for faster attention
 4. **Gradient checkpointing**: Implement in `model/gpt.py` for larger models
 5. **Mixed precision**: BFloat16 is enabled by default (better than FP16 for training)
@@ -356,15 +343,15 @@ Example:
 ## Common Issues
 
 ### Out of Memory
-- Reduce `B` (micro batch size)
+- Reduce `--batch_size` (micro batch size)
 - Enable gradient checkpointing
-- Use larger `grad_accum_steps` by reducing `B`
+- Use larger `grad_accum_steps` by reducing `--batch_size`
 
 ### Slow Training
 - Ensure Flash Attention is installed
 - Enable `--use_compile`
 - Check MFU percentage (should be >30% for efficient training)
-- Increase `B` to better utilize GPU
+- Increase `--batch_size` to better utilize GPU
 
 ### Checkpoint Issues
 - Ensure all processes have write access to `log_dir`
