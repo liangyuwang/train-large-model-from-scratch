@@ -99,4 +99,4 @@ MODEL_ARGS="\
   --moe_intermediate_size 768 \
 "
 
-torchrun $DISTRIBUTED_ARGS pretrain.py $TRAINING_ARGS $PARALLELISM_ARGS $MODEL_ARGS
+torchrun $DISTRIBUTED_ARGS pretrain_debug.py $TRAINING_ARGS $PARALLELISM_ARGS $MODEL_ARGS
