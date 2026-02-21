@@ -21,7 +21,7 @@ class DatasetConfig:
     hf_dataset_name: Optional[str] = None
     hf_split: str = "train"
     tokenizer_name_or_path: str = "gpt2"
-    max_samples: int = 2000
+    max_samples: int = 200000
     min_chars: int = 50
     add_eos_token: bool = True
     seed_shuffle_buffer: int = 0
