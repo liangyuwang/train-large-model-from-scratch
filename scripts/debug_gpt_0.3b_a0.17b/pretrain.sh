@@ -17,6 +17,8 @@
 #     NUM_NODES=2 NODE_RANK=1 MASTER_ADDR=192.168.1.100 bash scripts/debug_gpt_0.3b_a0.17b/pretrain.sh
 #
 
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
+
 # Multi-node config (can be overridden by environment variables)
 NUM_NODES=${NUM_NODES:-1}
 NUM_GPUS=${NUM_GPUS:-8}

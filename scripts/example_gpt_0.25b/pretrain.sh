@@ -41,7 +41,7 @@ BATCH_SIZE_PER_DP_RANK=$(($BATCH_SIZE * $SEP_SIZE))
 USE_COMPILE=${USE_COMPILE:-1}
 
 DEBUG=${DEBUG:-1}
-DETER_MODE=${DETER_MODE:-1} # deter mode for precision alignment
+DETER_MODE=${DETER_MODE:-0} # deter mode for precision alignment
 
 DISTRIBUTED_ARGS="\
   --nnodes=$NUM_NODES \
@@ -55,9 +55,6 @@ EXP_NAME="debug_gpt_0.25b"
 TRAINING_ARGS="\
   --exp_name $EXP_NAME \
   --seed 1337 \
-  --dataset_path ... \
-  --use_mock_data \
-  --mock_data_num_samples 12800 \
   --log_dir ./log \
   --total_batch_size $TOTAL_BATCH_SIZE \
   --batch_size $BATCH_SIZE_PER_DP_RANK \
